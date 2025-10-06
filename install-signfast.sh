@@ -3,7 +3,7 @@
 #############################################
 # 🚀 Script d'Installation Automatique SignFast
 # Pour VPS Ubuntu 24.04 LTS
-# Version: 2.0.0 - Avec intégration GitHub
+# Version: 2.0.1 - Fix Git Ownership
 #############################################
 
 set -e  # Arrêter en cas d'erreur
@@ -311,25 +311,43 @@ clone_from_github() {
     if [ -d "$APP_DIR/.git" ]; then
         log_warning "Le repository existe déjà, mise à jour..."
         cd "$APP_DIR"
+        
+        # Configurer Git safe.directory
+        log "Configuration de Git safe.directory..."
+        git config --global --add safe.directory "$APP_DIR" >> "$LOG_FILE" 2>&1
+        sudo -u "$APP_USER" git config --global --add safe.directory "$APP_DIR" >> "$LOG_FILE" 2>&1
+        
         sudo -u "$APP_USER" git fetch origin >> "$LOG_FILE" 2>&1
         sudo -u "$APP_USER" git checkout "$GITHUB_BRANCH" >> "$LOG_FILE" 2>&1
         sudo -u "$APP_USER" git pull origin "$GITHUB_BRANCH" >> "$LOG_FILE" 2>&1
     else
-        # Cloner le repository
-        sudo -u "$APP_USER" git clone -b "$GITHUB_BRANCH" "$GITHUB_REPO" "$APP_DIR/temp" >> "$LOG_FILE" 2>&1
+        # Créer un répertoire temporaire pour le clone
+        TEMP_DIR="/tmp/signfast-clone-$$"
+        mkdir -p "$TEMP_DIR"
         
-        # Déplacer les fichiers
-        sudo -u "$APP_USER" mv "$APP_DIR/temp/"* "$APP_DIR/" 2>/dev/null || true
-        sudo -u "$APP_USER" mv "$APP_DIR/temp/".* "$APP_DIR/" 2>/dev/null || true
-        rm -rf "$APP_DIR/temp"
+        # Cloner en tant qu'utilisateur signfast directement
+        log "Clonage du repository..."
+        sudo -u "$APP_USER" git clone -b "$GITHUB_BRANCH" "$GITHUB_REPO" "$TEMP_DIR" >> "$LOG_FILE" 2>&1
+        
+        # Déplacer les fichiers vers le répertoire final
+        log "Déplacement des fichiers..."
+        sudo -u "$APP_USER" cp -r "$TEMP_DIR/." "$APP_DIR/" >> "$LOG_FILE" 2>&1
+        
+        # Nettoyer le répertoire temporaire
+        rm -rf "$TEMP_DIR"
+        
+        # Configurer Git safe.directory pour les deux utilisateurs
+        log "Configuration de Git safe.directory..."
+        git config --global --add safe.directory "$APP_DIR" >> "$LOG_FILE" 2>&1
+        sudo -u "$APP_USER" git config --global --add safe.directory "$APP_DIR" >> "$LOG_FILE" 2>&1
     fi
     
     log_success "Repository cloné avec succès"
     
     # Afficher le commit actuel
     cd "$APP_DIR"
-    CURRENT_COMMIT=$(git rev-parse --short HEAD)
-    COMMIT_MESSAGE=$(git log -1 --pretty=%B)
+    CURRENT_COMMIT=$(sudo -u "$APP_USER" git rev-parse --short HEAD 2>/dev/null || echo "N/A")
+    COMMIT_MESSAGE=$(sudo -u "$APP_USER" git log -1 --pretty=%B 2>/dev/null || echo "N/A")
     log_info "Commit actuel: $CURRENT_COMMIT"
     log_info "Message: $COMMIT_MESSAGE"
 }
@@ -713,7 +731,7 @@ print_summary() {
     echo ""
     
     cd "$APP_DIR"
-    CURRENT_COMMIT=$(git rev-parse --short HEAD)
+    CURRENT_COMMIT=$(sudo -u "$APP_USER" git rev-parse --short HEAD 2>/dev/null || echo "N/A")
     echo -e "  📌 ${YELLOW}Commit actuel:${NC}"
     echo -e "     $CURRENT_COMMIT"
     echo ""
