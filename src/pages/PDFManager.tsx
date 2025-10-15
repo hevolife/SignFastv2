@@ -12,7 +12,7 @@ import { stripeConfig } from '../stripe-config';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
-import { FileText, Download, Trash2, Search, Calendar, HardDrive, RefreshCw, Lock, Crown, ArrowLeft, ArrowRight, Sparkles, Activity, Eye, User, Wifi, WifiOff } from 'lucide-react';
+import { FileText, Download, Trash2, Search, HardDrive, RefreshCw, Lock, ArrowLeft, ArrowRight, Activity, Eye } from 'lucide-react';
 import { X } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -30,7 +30,7 @@ interface FormResponsePDF {
   user_name?: string;
 }
 
-// Composant PDFCard optimisé avec key stable
+// 🎯 Composant PDFCard optimisé avec React.memo
 const PDFCard: React.FC<{
   pdf: FormResponsePDF;
   index: number;
@@ -140,7 +140,6 @@ const PDFCard: React.FC<{
     </Card>
   );
 }, (prevProps, nextProps) => {
-  // Comparaison personnalisée pour éviter les re-renders inutiles
   return (
     prevProps.pdf.id === nextProps.pdf.id &&
     prevProps.isLocked === nextProps.isLocked &&
@@ -165,14 +164,35 @@ export const PDFManager: React.FC = () => {
   const [sortBy, setSortBy] = useState<'date' | 'form' | 'user'>('date');
   const [selectedFormFilter, setSelectedFormFilter] = useState<string>('all');
   const [generatingPdf, setGeneratingPdf] = useState<string | null>(null);
-  const [isRealTimeEnabled, setIsRealTimeEnabled] = useState(true);
-  const [lastUpdateTime, setLastUpdateTime] = useState<Date>(new Date());
-  const [newResponsesCount, setNewResponsesCount] = useState(0);
   const [selectedResponseForDetails, setSelectedResponseForDetails] = useState<FormResponsePDF | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const product = stripeConfig.products[0];
 
-  const loadFormResponses = useCallback(async (silent: boolean = false) => {
+  // 🚀 OPTIMISATION CRITIQUE : Extraction rapide du nom utilisateur
+  const extractUserNameFast = useCallback((data: any): string => {
+    if (!data || typeof data !== 'object') return '';
+    
+    // Recherche directe des champs les plus courants (pas de boucle)
+    const firstName = data['Prénom'] || data['prénom'] || data['first_name'] || data['firstName'] || '';
+    const lastName = data['Nom'] || data['nom'] || data['last_name'] || data['lastName'] || '';
+    const fullName = data['nom_complet'] || data['Nom complet'] || data['nomComplet'] || '';
+    
+    if (fullName) return fullName;
+    if (firstName && lastName) return `${firstName} ${lastName}`;
+    if (firstName) return firstName;
+    if (lastName) return lastName;
+    
+    // Fallback email (rapide)
+    const email = data['email'] || data['Email'] || data['mail'] || '';
+    if (email && email.includes('@')) {
+      return email.split('@')[0].charAt(0).toUpperCase() + email.split('@')[0].slice(1);
+    }
+    
+    return '';
+  }, []);
+
+  // 🚀 OPTIMISATION CRITIQUE : Chargement ultra-rapide
+  const loadFormResponses = useCallback(async () => {
     if (!user) {
       setResponses([]);
       setTotalCount(0);
@@ -180,9 +200,8 @@ export const PDFManager: React.FC = () => {
       return;
     }
 
-    if (!silent) {
-      setLoading(true);
-    }
+    setLoading(true);
+    const startTime = performance.now();
     
     try {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -191,107 +210,55 @@ export const PDFManager: React.FC = () => {
       if (!supabaseUrl || !supabaseKey || supabaseUrl.includes('placeholder') || supabaseKey.includes('placeholder')) {
         setResponses([]);
         setTotalCount(0);
-        if (!silent) {
-          setLoading(false);
-        }
+        setLoading(false);
         return;
       }
 
       const userFormIds = forms.map(form => form.id);
       
       if (userFormIds.length === 0) {
-        if (!silent) {
-          setLoading(false);
-        }
-        return;
-      }
-
-      const { count, error: countError } = await supabase
-        .from('responses')
-        .select('id', { count: 'exact', head: true })
-        .in('form_id', userFormIds);
-
-      if (countError) {
-        setTotalCount(0);
-      } else {
-        setTotalCount(count || 0);
-      }
-
-      const offset = (currentPage - 1) * itemsPerPage;
-      const { data: responsesData, error } = await supabase
-        .from('responses')
-        .select('*')
-        .in('form_id', userFormIds)
-        .range(offset, offset + itemsPerPage - 1)
-        .order('created_at', { ascending: false });
-
-      if (error) {
         setResponses([]);
+        setTotalCount(0);
+        setLoading(false);
         return;
       }
 
-      const enrichedResponses: FormResponsePDF[] = (responsesData || []).map(response => {
-        const form = forms.find(f => f.id === response.form_id);
+      // 🚀 OPTIMISATION 1 : Requêtes parallèles (count + data en même temps)
+      const offset = (currentPage - 1) * itemsPerPage;
+      
+      const [countResult, dataResult] = await Promise.all([
+        // Count query (ultra-rapide avec head: true)
+        supabase
+          .from('responses')
+          .select('id', { count: 'exact', head: true })
+          .in('form_id', userFormIds),
         
-        const extractUserName = (data: Record<string, any>): string => {
-          if (!data || typeof data !== 'object') return '';
+        // Data query (seulement les colonnes nécessaires)
+        supabase
+          .from('responses')
+          .select('id, form_id, data, created_at')
+          .in('form_id', userFormIds)
+          .range(offset, offset + itemsPerPage - 1)
+          .order('created_at', { ascending: false })
+      ]);
 
-          const nameKeys = Object.keys(data).filter(key => {
-            const keyLower = key.toLowerCase();
-            return keyLower.includes('nom') || 
-                   keyLower.includes('name') || 
-                   keyLower.includes('prenom') ||
-                   keyLower.includes('prénom') ||
-                   keyLower.includes('first') ||
-                   keyLower.includes('last');
-          });
+      // 🚀 OPTIMISATION 2 : Traitement rapide du count
+      setTotalCount(countResult.count || 0);
 
-          let firstName = '';
-          let lastName = '';
-          let fullName = '';
+      if (dataResult.error) {
+        console.error('❌ Erreur chargement:', dataResult.error);
+        setResponses([]);
+        setLoading(false);
+        return;
+      }
 
-          for (const key of nameKeys) {
-            const value = data[key];
-            if (typeof value === 'string' && value.trim()) {
-              const keyLower = key.toLowerCase();
-              
-              if (keyLower.includes('complet') || keyLower.includes('full')) {
-                fullName = value.trim();
-                break;
-              } else if (keyLower.includes('prenom') || keyLower.includes('prénom') || keyLower.includes('first')) {
-                firstName = value.trim();
-              } else if (keyLower.includes('nom') && !keyLower.includes('prenom') && !keyLower.includes('prénom')) {
-                lastName = value.trim();
-              }
-            }
-          }
+      // 🚀 OPTIMISATION 3 : Map des formulaires pour accès O(1)
+      const formsMap = new Map(forms.map(f => [f.id, f]));
 
-          if (fullName) return fullName;
-          if (firstName && lastName) return `${firstName} ${lastName}`;
-          if (firstName) return firstName;
-          if (lastName) return lastName;
-
-          const emailKeys = Object.keys(data).filter(key => 
-            key.toLowerCase().includes('email') || key.toLowerCase().includes('mail')
-          );
-          
-          for (const key of emailKeys) {
-            const email = data[key];
-            if (typeof email === 'string' && email.includes('@')) {
-              const emailPart = email.split('@')[0];
-              if (emailPart.includes('.')) {
-                return emailPart.split('.').map(part => 
-                  part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
-                ).join(' ');
-              }
-              return emailPart.charAt(0).toUpperCase() + emailPart.slice(1).toLowerCase();
-            }
-          }
-
-          return '';
-        };
-
-        const userName = extractUserName(response.data);
+      // 🚀 OPTIMISATION 4 : Enrichissement ultra-rapide (pas de boucles imbriquées)
+      const enrichedResponses: FormResponsePDF[] = (dataResult.data || []).map(response => {
+        const form = formsMap.get(response.form_id);
+        const userName = extractUserNameFast(response.data);
 
         return {
           id: response.id,
@@ -300,8 +267,6 @@ export const PDFManager: React.FC = () => {
           form_description: form?.description || '',
           response_data: response.data,
           created_at: response.created_at,
-          ip_address: response.ip_address,
-          user_agent: response.user_agent,
           pdf_template_id: form?.settings?.pdfTemplateId,
           template_name: form?.settings?.pdfTemplateId ? 'Template personnalisé' : 'PDF Simple',
           user_name: userName,
@@ -309,93 +274,27 @@ export const PDFManager: React.FC = () => {
       });
 
       setResponses(enrichedResponses);
-      setLastUpdateTime(new Date());
+      
+      const endTime = performance.now();
+      console.log(`⚡ Chargement terminé en ${(endTime - startTime).toFixed(0)}ms`);
       
     } catch (error) {
+      console.error('❌ Erreur générale:', error);
       setResponses([]);
       setTotalCount(0);
     } finally {
-      if (!silent) {
-        setLoading(false);
-      }
+      setLoading(false);
     }
-  }, [user, forms, currentPage, itemsPerPage]);
+  }, [user, forms, currentPage, itemsPerPage, extractUserNameFast]);
 
+  // 🎯 Chargement initial
   useEffect(() => {
     if (user && forms.length > 0) {
       loadFormResponses();
     }
-    
-    const autoRefreshInterval = setInterval(() => {
-      if (isRealTimeEnabled) {
-        loadFormResponses(true);
-      }
-    }, 30000);
-    
-    return () => clearInterval(autoRefreshInterval);
-  }, [user, forms, loadFormResponses, isRealTimeEnabled]);
+  }, [user, forms, loadFormResponses]);
 
-  useEffect(() => {
-    if (!user || !isRealTimeEnabled) return;
-
-    const userFormIds = forms.map(form => form.id);
-    
-    if (userFormIds.length === 0) {
-      return;
-    }
-
-    const channel = supabase
-      .channel('pdf_storage_responses')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'responses',
-          filter: `form_id=in.(${userFormIds.join(',')})`
-        },
-        (payload) => {
-          setNewResponsesCount(prev => prev + 1);
-          setLastUpdateTime(new Date());
-          
-          setTimeout(() => {
-            loadFormResponses(true);
-            setNewResponsesCount(0);
-          }, 2000);
-          
-          toast.success('📄 Nouvelle réponse reçue ! Actualisation...', {
-            duration: 3000,
-            icon: '🆕'
-          });
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'DELETE',
-          schema: 'public',
-          table: 'responses',
-          filter: `form_id=in.(${userFormIds.join(',')})`
-        },
-        (payload) => {
-          setLastUpdateTime(new Date());
-          
-          setTimeout(() => {
-            loadFormResponses(true);
-          }, 1000);
-          
-          toast.info('📄 Réponse supprimée, actualisation...', {
-            duration: 2000
-          });
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user, forms, isRealTimeEnabled, loadFormResponses]);
-
+  // 🎯 Génération PDF optimisée
   const generateAndDownloadPDF = useCallback(async (response: FormResponsePDF) => {
     if (!response) return;
 
@@ -404,6 +303,7 @@ export const PDFManager: React.FC = () => {
     try {
       const toastId = toast.loading('📄 Génération du PDF en cours...');
 
+      // Récupérer les données complètes
       const { data: fullResponse, error: responseError } = await supabase
         .from('responses')
         .select('data')
@@ -570,6 +470,7 @@ export const PDFManager: React.FC = () => {
 
   const totalPages = Math.ceil(totalCount / itemsPerPage);
 
+  // 🎯 Filtrage et tri optimisés avec useMemo
   const filteredAndSortedResponses = useMemo(() => {
     return responses
       .filter(response => {
@@ -603,6 +504,7 @@ export const PDFManager: React.FC = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-green-50 to-emerald-50 dark:from-gray-900 dark:via-green-900/20 dark:to-emerald-900/20">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Header */}
         <div className="relative overflow-hidden bg-gradient-to-r from-green-600 via-emerald-600 to-teal-700 rounded-3xl shadow-2xl mb-8">
           <div className="absolute inset-0 bg-black/10"></div>
           <div className="absolute top-4 right-4 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
@@ -628,63 +530,23 @@ export const PDFManager: React.FC = () => {
                 }
               </p>
               
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8">
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                 <div className="inline-flex items-center space-x-2 bg-white/10 backdrop-blur-sm rounded-full px-4 py-2 text-white/90 text-sm font-medium">
                   <Activity className="h-4 w-4" />
                   <span>{totalCount} réponse{totalCount > 1 ? 's' : ''} disponible{totalCount > 1 ? 's' : ''}</span>
                 </div>
                 
-                <div className={`inline-flex items-center space-x-2 bg-white/10 backdrop-blur-sm rounded-full px-3 py-1 text-white/90 text-xs font-medium ${
-                  isRealTimeEnabled ? 'animate-pulse' : ''
-                }`}>
-                  {isRealTimeEnabled ? (
-                    <Wifi className="h-3 w-3 text-green-400" />
-                  ) : (
-                    <WifiOff className="h-3 w-3 text-red-400" />
-                  )}
-                  <span>{isRealTimeEnabled ? 'Temps réel actif' : 'Temps réel désactivé'}</span>
-                  {newResponsesCount > 0 && (
-                    <span className="bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">
-                      {newResponsesCount}
-                    </span>
-                  )}
-                </div>
-                
-                <div className="flex items-center space-x-3">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setLoading(true);
-                      loadFormResponses();
-                    }}
-                    className="bg-white/20 backdrop-blur-sm text-white border border-white/30 hover:bg-white/30 font-semibold shadow-lg hover:shadow-xl transition-all duration-300"
-                    title="Actualiser la liste"
-                  >
-                    <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                    <span className="hidden sm:inline ml-2">Actualiser</span>
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setIsRealTimeEnabled(!isRealTimeEnabled)}
-                    className={`font-semibold shadow-lg hover:shadow-xl transition-all duration-300 ${
-                      isRealTimeEnabled 
-                        ? 'bg-green-500/80 backdrop-blur-sm text-white border border-green-400/30 hover:bg-green-600/80'
-                        : 'bg-red-500/80 backdrop-blur-sm text-white border border-red-400/30 hover:bg-red-600/80'
-                    }`}
-                    title={isRealTimeEnabled ? 'Désactiver le temps réel' : 'Activer le temps réel'}
-                  >
-                    {isRealTimeEnabled ? (
-                      <Wifi className="h-4 w-4" />
-                    ) : (
-                      <WifiOff className="h-4 w-4" />
-                    )}
-                    <span className="hidden sm:inline ml-2">
-                      {isRealTimeEnabled ? 'Temps réel ON' : 'Temps réel OFF'}
-                    </span>
-                  </Button>
-                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => loadFormResponses()}
+                  disabled={loading}
+                  className="bg-white/20 backdrop-blur-sm text-white border border-white/30 hover:bg-white/30 font-semibold shadow-lg hover:shadow-xl transition-all duration-300"
+                  title="Actualiser la liste"
+                >
+                  <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                  <span className="ml-2">Actualiser</span>
+                </Button>
               </div>
             </div>
           </div>
@@ -694,28 +556,9 @@ export const PDFManager: React.FC = () => {
           <SubscriptionBanner />
         </div>
         
+        {/* Filtres */}
         <Card className="mb-6 bg-white/80 backdrop-blur-sm border-0 shadow-xl">
           <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-200/50 dark:border-gray-700/50">
-              <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-400">
-                <Activity className="h-4 w-4" />
-                <span>Dernière mise à jour: {lastUpdateTime.toLocaleTimeString('fr-FR')}</span>
-                {newResponsesCount > 0 && (
-                  <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
-                    +{newResponsesCount} nouvelle{newResponsesCount > 1 ? 's' : ''} réponse{newResponsesCount > 1 ? 's' : ''}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className={`w-2 h-2 rounded-full ${
-                  isRealTimeEnabled ? 'bg-green-500 animate-pulse' : 'bg-red-500'
-                }`}></div>
-                <span className="text-xs text-gray-500 font-medium">
-                  {isRealTimeEnabled ? 'Synchronisation active' : 'Mode manuel'}
-                </span>
-              </div>
-            </div>
-            
             <div className="flex flex-col lg:flex-row gap-4">
               <div className="flex-1">
                 <div className="relative">
@@ -760,6 +603,7 @@ export const PDFManager: React.FC = () => {
           </CardContent>
         </Card>
 
+        {/* Liste des cartes */}
         {loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -820,6 +664,7 @@ export const PDFManager: React.FC = () => {
               ))}
             </div>
 
+            {/* Pagination */}
             {totalPages > 1 && (
               <Card className="mt-8 bg-white/80 backdrop-blur-sm border-0 shadow-xl">
                 <CardContent className="p-4">
@@ -883,38 +728,6 @@ export const PDFManager: React.FC = () => {
             )}
           </>
         )}
-
-        {newResponsesCount > 0 && (
-          <Card className="mb-6 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 animate-pulse">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center">
-                    <Activity className="h-5 w-5 text-blue-600 animate-pulse" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-300">
-                      {newResponsesCount} nouvelle{newResponsesCount > 1 ? 's' : ''} réponse{newResponsesCount > 1 ? 's' : ''} !
-                    </h3>
-                    <p className="text-xs text-blue-700 dark:text-blue-400">
-                      Actualisation automatique en cours...
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    loadFormResponses();
-                    setNewResponsesCount(0);
-                  }}
-                  className="bg-blue-600 hover:bg-blue-700 text-white"
-                >
-                  Actualiser maintenant
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
         
         {showLimitModal && (
           <LimitReachedModal
@@ -926,6 +739,7 @@ export const PDFManager: React.FC = () => {
           />
         )}
 
+        {/* Modal détails réponse */}
         {showDetailsModal && selectedResponseForDetails && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <Card className="max-w-4xl w-full max-h-[90vh] overflow-y-auto bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
