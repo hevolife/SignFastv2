@@ -16,13 +16,11 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Créer un client Supabase avec les permissions admin
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    // Vérifier l'authentification
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -41,8 +39,10 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Vérifier si l'utilisateur est super admin
-    const isSuperAdmin = user.email === 'admin@signfast.com' || user.email?.endsWith('@admin.signfast.com');
+    const isSuperAdmin = user.email === 'admin@signfast.com' || 
+                         user.email === 'admin@signfast.pro' || 
+                         user.email?.endsWith('@admin.signfast.com') ||
+                         user.email?.endsWith('@admin.signfast.pro');
     
     if (!isSuperAdmin) {
       return new Response(JSON.stringify({ error: 'Forbidden: Not a super admin' }), {
@@ -52,24 +52,18 @@ Deno.serve(async (req: Request) => {
     }
 
     if (req.method === 'GET') {
-      // Lister tous les codes secrets
-      console.log('🔑 Récupération de tous les codes secrets...');
-      
       const { data, error } = await supabase
         .from('secret_codes')
         .select('*')
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('❌ Erreur récupération codes:', error);
         return new Response(JSON.stringify({ error: 'Failed to fetch secret codes' }), {
           status: 500,
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
         });
       }
 
-      console.log('✅ Codes récupérés:', data?.length || 0);
-      
       return new Response(JSON.stringify(data || []), {
         status: 200,
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -77,7 +71,6 @@ Deno.serve(async (req: Request) => {
     }
 
     if (req.method === 'POST') {
-      // Créer un nouveau code secret
       const { type, description, maxUses } = await req.json();
 
       if (!type || !description) {
@@ -87,8 +80,6 @@ Deno.serve(async (req: Request) => {
         });
       }
 
-      console.log('🔑 Création code secret:', { type, description, maxUses });
-      
       const code = `${type.toUpperCase()}${Date.now().toString().slice(-6)}`;
       const expiresAt = type === 'monthly' 
         ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
@@ -109,15 +100,12 @@ Deno.serve(async (req: Request) => {
         .single();
 
       if (error) {
-        console.error('❌ Erreur création code:', error);
         return new Response(JSON.stringify({ error: 'Failed to create secret code' }), {
           status: 500,
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
         });
       }
 
-      console.log('✅ Code créé avec succès:', data);
-      
       return new Response(JSON.stringify(data), {
         status: 200,
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -125,7 +113,6 @@ Deno.serve(async (req: Request) => {
     }
 
     if (req.method === 'DELETE') {
-      // Supprimer un code secret
       const url = new URL(req.url);
       const codeId = url.searchParams.get('id');
 
@@ -136,23 +123,18 @@ Deno.serve(async (req: Request) => {
         });
       }
 
-      console.log('🗑️ Suppression code secret:', codeId);
-      
       const { error } = await supabase
         .from('secret_codes')
         .delete()
         .eq('id', codeId);
 
       if (error) {
-        console.error('❌ Erreur suppression code:', error);
         return new Response(JSON.stringify({ error: 'Failed to delete secret code' }), {
           status: 500,
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
         });
       }
 
-      console.log('✅ Code supprimé avec succès');
-      
       return new Response(JSON.stringify({ success: true }), {
         status: 200,
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -165,7 +147,6 @@ Deno.serve(async (req: Request) => {
     });
 
   } catch (error: any) {
-    console.error('❌ Erreur générale:', error);
     return new Response(JSON.stringify({ error: 'Internal server error: ' + error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },

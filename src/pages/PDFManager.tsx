@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { formatDateTimeFR } from '../utils/dateFormatter';
 import { useLimits } from '../hooks/useLimits';
@@ -12,7 +11,7 @@ import { stripeConfig } from '../stripe-config';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
-import { FileText, Download, Trash2, Search, HardDrive, RefreshCw, Lock, ArrowLeft, ArrowRight, Activity, Eye } from 'lucide-react';
+import { FileText, Download, Trash2, Search, HardDrive, RefreshCw, Lock, ArrowLeft, ArrowRight, Activity, Eye, Filter, Calendar, User, FileCheck } from 'lucide-react';
 import { X } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -28,9 +27,34 @@ interface FormResponsePDF {
   pdf_template_id?: string;
   template_name?: string;
   user_name?: string;
+  form_color?: string;
+  form_icon?: string;
 }
 
-// 🎯 Composant PDFCard optimisé avec React.memo
+// 🎨 Couleurs et icônes par type de formulaire
+const FORM_THEMES = {
+  default: { color: 'from-blue-500 to-indigo-600', icon: '📋', badge: 'bg-blue-100 text-blue-800' },
+  contact: { color: 'from-green-500 to-emerald-600', icon: '📞', badge: 'bg-green-100 text-green-800' },
+  inscription: { color: 'from-purple-500 to-pink-600', icon: '✍️', badge: 'bg-purple-100 text-purple-800' },
+  commande: { color: 'from-orange-500 to-red-600', icon: '🛒', badge: 'bg-orange-100 text-orange-800' },
+  devis: { color: 'from-yellow-500 to-amber-600', icon: '💰', badge: 'bg-yellow-100 text-yellow-800' },
+  feedback: { color: 'from-teal-500 to-cyan-600', icon: '💬', badge: 'bg-teal-100 text-teal-800' },
+  candidature: { color: 'from-indigo-500 to-blue-600', icon: '👔', badge: 'bg-indigo-100 text-indigo-800' },
+};
+
+// 🎯 Détection automatique du type de formulaire
+const detectFormType = (title: string): keyof typeof FORM_THEMES => {
+  const lowerTitle = title.toLowerCase();
+  if (lowerTitle.includes('contact')) return 'contact';
+  if (lowerTitle.includes('inscription') || lowerTitle.includes('register')) return 'inscription';
+  if (lowerTitle.includes('commande') || lowerTitle.includes('order')) return 'commande';
+  if (lowerTitle.includes('devis') || lowerTitle.includes('quote')) return 'devis';
+  if (lowerTitle.includes('feedback') || lowerTitle.includes('avis')) return 'feedback';
+  if (lowerTitle.includes('candidature') || lowerTitle.includes('cv')) return 'candidature';
+  return 'default';
+};
+
+// 🎯 Composant PDFCard ultra-optimisé avec design moderne
 const PDFCard: React.FC<{
   pdf: FormResponsePDF;
   index: number;
@@ -40,6 +64,9 @@ const PDFCard: React.FC<{
   isLocked: boolean;
   isGenerating: boolean;
 }> = React.memo(({ pdf, index, onView, onDownload, onDelete, isLocked, isGenerating }) => {
+  const formType = detectFormType(pdf.form_title);
+  const theme = FORM_THEMES[formType];
+
   const getUserName = useCallback(() => {
     try {
       const data = typeof pdf.response_data === 'string' ? JSON.parse(pdf.response_data) : pdf.response_data;
@@ -56,70 +83,91 @@ const PDFCard: React.FC<{
       }
       if (firstName) return firstName;
       if (lastName) return lastName;
-      return pdf.user_name || `PDF #${pdf.id.slice(-8)}`;
+      return pdf.user_name || `Réponse #${pdf.id.slice(-8)}`;
     } catch {
-      return pdf.user_name || `PDF #${pdf.id.slice(-8)}`;
+      return pdf.user_name || `Réponse #${pdf.id.slice(-8)}`;
     }
   }, [pdf.response_data, pdf.user_name, pdf.id]);
 
   return (
-    <Card className="group bg-white/80 backdrop-blur-sm border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 h-full">
-      <CardHeader>
-        <div className="flex justify-between items-start">
-          <div className="flex items-center space-x-4 mb-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-              <span className="text-white text-lg">📄</span>
-            </div>
-            <div>
-              <h3 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                {getUserName()}
-              </h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2 font-medium">
-                {pdf.form_title}
-              </p>
-            </div>
+    <Card className="group relative bg-white/90 backdrop-blur-sm border-0 shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-2 overflow-hidden">
+      {/* Bande colorée en haut */}
+      <div className={`absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r ${theme.color}`}></div>
+      
+      {/* Badge de verrouillage */}
+      {isLocked && (
+        <div className="absolute top-3 right-3 z-10">
+          <div className="flex items-center justify-center w-8 h-8 bg-red-500/90 backdrop-blur-sm rounded-full shadow-lg">
+            <Lock className="h-4 w-4 text-white" />
           </div>
-          {isLocked && (
-            <div className="flex items-center justify-center w-8 h-8 bg-red-100 dark:bg-red-900/30 rounded-full">
-              <Lock className="h-4 w-4 text-red-600 dark:text-red-400" />
-            </div>
-          )}
+        </div>
+      )}
+
+      <CardHeader className="pb-3">
+        <div className="flex items-start space-x-4">
+          {/* Icône du formulaire */}
+          <div className={`flex-shrink-0 w-14 h-14 bg-gradient-to-br ${theme.color} rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300`}>
+            <span className="text-2xl">{theme.icon}</span>
+          </div>
+          
+          {/* Informations */}
+          <div className="flex-1 min-w-0">
+            <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate mb-1">
+              {getUserName()}
+            </h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-1 font-medium">
+              {pdf.form_title}
+            </p>
+          </div>
         </div>
       </CardHeader>
-      <CardContent>
+
+      <CardContent className="pt-0">
+        {/* Badges d'information */}
         <div className="flex flex-wrap gap-2 mb-4">
-          <span className="text-xs bg-gradient-to-r from-green-100 to-emerald-100 text-green-800 px-3 py-1 rounded-full font-semibold shadow-sm dark:from-green-900/30 dark:to-emerald-900/30 dark:text-green-300">
-            {pdf.template_name || 'PDF Simple'}
+          <span className={`inline-flex items-center text-xs ${theme.badge} px-3 py-1.5 rounded-full font-semibold shadow-sm`}>
+            <FileCheck className="h-3 w-3 mr-1" />
+            {formType.charAt(0).toUpperCase() + formType.slice(1)}
           </span>
-          <span className="text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-3 py-1 rounded-full font-semibold">
+          <span className="inline-flex items-center text-xs bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-full font-semibold">
+            <Calendar className="h-3 w-3 mr-1" />
             {formatDateTimeFR(pdf.created_at)}
           </span>
+          {pdf.template_name && (
+            <span className="inline-flex items-center text-xs bg-gradient-to-r from-amber-100 to-yellow-100 text-amber-800 px-3 py-1.5 rounded-full font-semibold shadow-sm">
+              📄 {pdf.template_name}
+            </span>
+          )}
         </div>
         
-        <div className="flex items-center gap-2 flex-wrap">
+        {/* Actions */}
+        <div className="flex items-center gap-2">
           <Button 
             variant="ghost" 
             size="sm" 
             onClick={() => onDownload(pdf)}
-            className="flex-1 flex items-center justify-center space-x-1 bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600 shadow-lg hover:shadow-xl transition-all duration-300 font-semibold rounded-xl"
+            className="flex-1 flex items-center justify-center space-x-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600 shadow-md hover:shadow-lg transition-all duration-300 font-semibold rounded-xl h-10"
             disabled={isLocked || isGenerating}
           >
             {isGenerating ? (
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                <span className="hidden sm:inline">Génération...</span>
+              </>
             ) : (
-              <Download className="h-4 w-4" />
+              <>
+                <Download className="h-4 w-4" />
+                <span className="hidden sm:inline">Générer PDF</span>
+              </>
             )}
-            <span className="hidden sm:inline">
-              {isGenerating ? 'Génération...' : 'Générer PDF'}
-            </span>
           </Button>
           
           <Button
             variant="ghost"
             size="sm"
             onClick={() => onView(pdf)}
-            className="bg-gradient-to-r from-blue-500 to-indigo-500 text-white hover:from-blue-600 hover:to-indigo-600 shadow-lg hover:shadow-xl transition-all duration-300 font-semibold rounded-xl"
-            title="Voir les détails de la réponse"
+            className="bg-gradient-to-r from-blue-500 to-indigo-500 text-white hover:from-blue-600 hover:to-indigo-600 shadow-md hover:shadow-lg transition-all duration-300 font-semibold rounded-xl h-10 px-3"
+            title="Voir les détails"
             disabled={isLocked}
           >
             <Eye className="h-4 w-4" />
@@ -129,8 +177,8 @@ const PDFCard: React.FC<{
             variant="ghost"
             size="sm"
             onClick={() => onDelete(pdf.id, pdf.form_title)}
-            className="bg-gradient-to-r from-red-500 to-pink-500 text-white hover:from-red-600 hover:to-pink-600 shadow-lg hover:shadow-xl transition-all duration-300 font-semibold rounded-xl"
-            title="Supprimer la réponse"
+            className="bg-gradient-to-r from-red-500 to-pink-500 text-white hover:from-red-600 hover:to-pink-600 shadow-md hover:shadow-lg transition-all duration-300 font-semibold rounded-xl h-10 px-3"
+            title="Supprimer"
             disabled={isLocked}
           >
             <Trash2 className="h-4 w-4" />
@@ -168,11 +216,10 @@ export const PDFManager: React.FC = () => {
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const product = stripeConfig.products[0];
 
-  // 🚀 OPTIMISATION CRITIQUE : Extraction rapide du nom utilisateur
+  // 🚀 Extraction ultra-rapide du nom utilisateur
   const extractUserNameFast = useCallback((data: any): string => {
     if (!data || typeof data !== 'object') return '';
     
-    // Recherche directe des champs les plus courants (pas de boucle)
     const firstName = data['Prénom'] || data['prénom'] || data['first_name'] || data['firstName'] || '';
     const lastName = data['Nom'] || data['nom'] || data['last_name'] || data['lastName'] || '';
     const fullName = data['nom_complet'] || data['Nom complet'] || data['nomComplet'] || '';
@@ -182,7 +229,6 @@ export const PDFManager: React.FC = () => {
     if (firstName) return firstName;
     if (lastName) return lastName;
     
-    // Fallback email (rapide)
     const email = data['email'] || data['Email'] || data['mail'] || '';
     if (email && email.includes('@')) {
       return email.split('@')[0].charAt(0).toUpperCase() + email.split('@')[0].slice(1);
@@ -191,7 +237,7 @@ export const PDFManager: React.FC = () => {
     return '';
   }, []);
 
-  // 🚀 OPTIMISATION CRITIQUE : Chargement ultra-rapide
+  // 🚀 Chargement ultra-rapide avec requêtes parallèles
   const loadFormResponses = useCallback(async () => {
     if (!user) {
       setResponses([]);
@@ -223,26 +269,23 @@ export const PDFManager: React.FC = () => {
         return;
       }
 
-      // 🚀 OPTIMISATION 1 : Requêtes parallèles (count + data en même temps)
       const offset = (currentPage - 1) * itemsPerPage;
       
+      // 🚀 Requêtes parallèles (count + data)
       const [countResult, dataResult] = await Promise.all([
-        // Count query (ultra-rapide avec head: true)
         supabase
-          .from('responses')
+          .from('form_responses')
           .select('id', { count: 'exact', head: true })
           .in('form_id', userFormIds),
         
-        // Data query (seulement les colonnes nécessaires)
         supabase
-          .from('responses')
+          .from('form_responses')
           .select('id, form_id, data, created_at')
           .in('form_id', userFormIds)
           .range(offset, offset + itemsPerPage - 1)
           .order('created_at', { ascending: false })
       ]);
 
-      // 🚀 OPTIMISATION 2 : Traitement rapide du count
       setTotalCount(countResult.count || 0);
 
       if (dataResult.error) {
@@ -252,10 +295,10 @@ export const PDFManager: React.FC = () => {
         return;
       }
 
-      // 🚀 OPTIMISATION 3 : Map des formulaires pour accès O(1)
+      // 🚀 Map des formulaires pour accès O(1)
       const formsMap = new Map(forms.map(f => [f.id, f]));
 
-      // 🚀 OPTIMISATION 4 : Enrichissement ultra-rapide (pas de boucles imbriquées)
+      // 🚀 Enrichissement ultra-rapide
       const enrichedResponses: FormResponsePDF[] = (dataResult.data || []).map(response => {
         const form = formsMap.get(response.form_id);
         const userName = extractUserNameFast(response.data);
@@ -287,14 +330,13 @@ export const PDFManager: React.FC = () => {
     }
   }, [user, forms, currentPage, itemsPerPage, extractUserNameFast]);
 
-  // 🎯 Chargement initial
   useEffect(() => {
     if (user && forms.length > 0) {
       loadFormResponses();
     }
   }, [user, forms, loadFormResponses]);
 
-  // 🎯 Génération PDF optimisée
+  // 🎯 Génération PDF
   const generateAndDownloadPDF = useCallback(async (response: FormResponsePDF) => {
     if (!response) return;
 
@@ -303,9 +345,8 @@ export const PDFManager: React.FC = () => {
     try {
       const toastId = toast.loading('📄 Génération du PDF en cours...');
 
-      // Récupérer les données complètes
       const { data: fullResponse, error: responseError } = await supabase
-        .from('responses')
+        .from('form_responses')
         .select('data')
         .eq('id', response.id)
         .single();
@@ -434,28 +475,45 @@ export const PDFManager: React.FC = () => {
     }
   };
 
+  // 🔥 CORRECTION : Fonction de suppression améliorée
   const deleteResponse = useCallback(async (responseId: string, formTitle: string) => {
-    if (!window.confirm(`Supprimer cette réponse de "${formTitle}" ?`)) {
+    if (!window.confirm(`⚠️ Supprimer définitivement cette réponse de "${formTitle}" ?\n\nCette action est irréversible.`)) {
       return;
     }
 
+    const toastId = toast.loading('🗑️ Suppression en cours...');
+
     try {
-      const { error } = await supabase
-        .from('responses')
+      console.log('🗑️ Tentative de suppression de la réponse:', responseId);
+
+      // Suppression directe avec vérification d'erreur
+      const { error, status, statusText } = await supabase
+        .from('form_responses')
         .delete()
         .eq('id', responseId);
 
       if (error) {
-        toast.error('Erreur lors de la suppression');
+        console.error('❌ Erreur Supabase:', error);
+        toast.error(`❌ Erreur: ${error.message}`, { id: toastId });
         return;
       }
 
-      await loadFormResponses();
-      toast.success('✅ Réponse supprimée avec succès');
+      console.log('✅ Suppression réussie, status:', status, statusText);
+
+      // Mise à jour locale immédiate
+      setResponses(prev => prev.filter(r => r.id !== responseId));
+      setTotalCount(prev => Math.max(0, prev - 1));
+
+      toast.success('✅ Réponse supprimée avec succès', { id: toastId });
       
-    } catch (error) {
+      // Recharger les données pour être sûr
+      setTimeout(() => {
+        loadFormResponses();
+      }, 500);
+      
+    } catch (error: any) {
       console.error('❌ Erreur générale suppression:', error);
-      toast.error('Erreur lors de la suppression');
+      toast.error(`❌ Erreur: ${error.message}`, { id: toastId });
     }
   }, [loadFormResponses]);
 
@@ -470,7 +528,7 @@ export const PDFManager: React.FC = () => {
 
   const totalPages = Math.ceil(totalCount / itemsPerPage);
 
-  // 🎯 Filtrage et tri optimisés avec useMemo
+  // 🎯 Filtrage et tri optimisés
   const filteredAndSortedResponses = useMemo(() => {
     return responses
       .filter(response => {
@@ -502,10 +560,10 @@ export const PDFManager: React.FC = () => {
   const isLocked = !isSubscribed && !hasSecretCode;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-green-50 to-emerald-50 dark:from-gray-900 dark:via-green-900/20 dark:to-emerald-900/20">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-gray-900 dark:via-blue-900/20 dark:to-indigo-900/20">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Header */}
-        <div className="relative overflow-hidden bg-gradient-to-r from-green-600 via-emerald-600 to-teal-700 rounded-3xl shadow-2xl mb-8">
+        {/* Header moderne */}
+        <div className="relative overflow-hidden bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-700 rounded-3xl shadow-2xl mb-8">
           <div className="absolute inset-0 bg-black/10"></div>
           <div className="absolute top-4 right-4 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
           <div className="absolute bottom-4 left-4 w-24 h-24 bg-yellow-400/20 rounded-full blur-xl"></div>
@@ -556,42 +614,46 @@ export const PDFManager: React.FC = () => {
           <SubscriptionBanner />
         </div>
         
-        {/* Filtres */}
-        <Card className="mb-6 bg-white/80 backdrop-blur-sm border-0 shadow-xl">
+        {/* Filtres modernes */}
+        <Card className="mb-6 bg-white/90 backdrop-blur-sm border-0 shadow-xl">
           <CardContent className="p-6">
             <div className="flex flex-col lg:flex-row gap-4">
               <div className="flex-1">
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 h-4 w-4" />
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 h-5 w-5" />
                   <Input
                     placeholder="Rechercher par formulaire, utilisateur ou contenu..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10 bg-white/70 backdrop-blur-sm border-gray-200/50 focus:border-green-500 rounded-xl font-medium"
+                    className="pl-10 bg-white/70 backdrop-blur-sm border-gray-200/50 focus:border-blue-500 rounded-xl font-medium h-12 text-base"
                   />
                 </div>
               </div>
-              <div className="flex items-center justify-center gap-3">
-                <span className="text-sm text-gray-600 dark:text-gray-400 hidden sm:inline font-semibold">Filtres:</span>
+              <div className="flex items-center justify-center gap-3 flex-wrap">
                 <div className="relative">
+                  <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 h-4 w-4 pointer-events-none" />
                   <select
                     value={selectedFormFilter}
                     onChange={(e) => setSelectedFormFilter(e.target.value)}
-                    className="appearance-none bg-white/70 dark:bg-gray-800/70 border border-gray-200/50 dark:border-gray-600/50 rounded-xl px-3 py-2 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 cursor-pointer hover:bg-white dark:hover:bg-gray-700 transition-all backdrop-blur-sm font-medium shadow-lg"
+                    className="appearance-none bg-white/70 dark:bg-gray-800/70 border border-gray-200/50 dark:border-gray-600/50 rounded-xl pl-10 pr-10 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer hover:bg-white dark:hover:bg-gray-700 transition-all backdrop-blur-sm font-medium shadow-md min-w-[200px]"
                   >
                     <option value="all">📋 Tous les formulaires</option>
-                    {forms.map(form => (
-                      <option key={form.id} value={form.id}>
-                        📝 {form.title}
-                      </option>
-                    ))}
+                    {forms.map(form => {
+                      const formType = detectFormType(form.title);
+                      const theme = FORM_THEMES[formType];
+                      return (
+                        <option key={form.id} value={form.id}>
+                          {theme.icon} {form.title}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
                 <div className="relative">
                   <select
                     value={sortBy}
                     onChange={(e) => setSortBy(e.target.value as 'date' | 'form' | 'user')}
-                    className="appearance-none bg-white/70 dark:bg-gray-800/70 border border-gray-200/50 dark:border-gray-600/50 rounded-xl px-3 py-2 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 cursor-pointer hover:bg-white dark:hover:bg-gray-700 transition-all backdrop-blur-sm font-medium shadow-lg"
+                    className="appearance-none bg-white/70 dark:bg-gray-800/70 border border-gray-200/50 dark:border-gray-600/50 rounded-xl px-4 py-3 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer hover:bg-white dark:hover:bg-gray-700 transition-all backdrop-blur-sm font-medium shadow-md"
                   >
                     <option value="date">📅 Plus récent</option>
                     <option value="form">📝 Par formulaire</option>
@@ -605,28 +667,29 @@ export const PDFManager: React.FC = () => {
 
         {/* Liste des cartes */}
         {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {[1, 2, 3, 4, 5, 6].map((i) => (
               <Card key={`skeleton-${i}`} className="animate-pulse bg-white/60 backdrop-blur-sm border-0 shadow-lg">
+                <div className="h-1.5 bg-gradient-to-r from-blue-200 to-indigo-200 rounded-t-lg"></div>
                 <CardHeader>
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-gray-200 dark:bg-gray-700 rounded-2xl"></div>
+                  <div className="flex items-center space-x-4">
+                    <div className="w-14 h-14 bg-gray-200 dark:bg-gray-700 rounded-2xl"></div>
                     <div className="flex-1">
-                      <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded-lg w-3/4 mb-2"></div>
-                      <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded-lg w-1/2"></div>
+                      <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded-lg w-3/4 mb-2"></div>
+                      <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded-lg w-1/2"></div>
                     </div>
                   </div>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-3">
                     <div className="flex gap-2">
-                      <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded-lg w-16"></div>
-                      <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded-lg w-20"></div>
+                      <div className="h-7 bg-gray-200 dark:bg-gray-700 rounded-full w-20"></div>
+                      <div className="h-7 bg-gray-200 dark:bg-gray-700 rounded-full w-24"></div>
                     </div>
                     <div className="flex gap-2">
-                      <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded-lg flex-1"></div>
-                      <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded-lg w-16"></div>
-                      <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded-lg w-16"></div>
+                      <div className="h-10 bg-gray-200 dark:bg-gray-700 rounded-xl flex-1"></div>
+                      <div className="h-10 bg-gray-200 dark:bg-gray-700 rounded-xl w-12"></div>
+                      <div className="h-10 bg-gray-200 dark:bg-gray-700 rounded-xl w-12"></div>
                     </div>
                   </div>
                 </CardContent>
@@ -634,9 +697,9 @@ export const PDFManager: React.FC = () => {
             ))}
           </div>
         ) : filteredAndSortedResponses.length === 0 ? (
-          <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-xl">
+          <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-xl">
             <CardContent className="text-center py-16">
-              <div className="w-20 h-20 bg-gradient-to-br from-green-500 to-emerald-500 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-lg">
+              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-lg">
                 <FileText className="h-10 w-10 text-white" />
               </div>
               <h3 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white mb-4">
@@ -649,7 +712,7 @@ export const PDFManager: React.FC = () => {
           </Card>
         ) : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredAndSortedResponses.map((response, index) => (
                 <PDFCard
                   key={`pdf-${response.id}`}
@@ -664,13 +727,13 @@ export const PDFManager: React.FC = () => {
               ))}
             </div>
 
-            {/* Pagination */}
+            {/* Pagination moderne */}
             {totalPages > 1 && (
-              <Card className="mt-8 bg-white/80 backdrop-blur-sm border-0 shadow-xl">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
+              <Card className="mt-8 bg-white/90 backdrop-blur-sm border-0 shadow-xl">
+                <CardContent className="p-6">
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                     <div className="text-sm text-gray-600 dark:text-gray-400 font-medium">
-                      Affichage de {((currentPage - 1) * itemsPerPage) + 1} à {Math.min(currentPage * itemsPerPage, totalCount)} sur {totalCount} réponses
+                      Affichage de <span className="font-bold text-gray-900 dark:text-white">{((currentPage - 1) * itemsPerPage) + 1}</span> à <span className="font-bold text-gray-900 dark:text-white">{Math.min(currentPage * itemsPerPage, totalCount)}</span> sur <span className="font-bold text-gray-900 dark:text-white">{totalCount}</span> réponses
                     </div>
                     <div className="flex items-center space-x-2">
                       <Button
@@ -678,7 +741,7 @@ export const PDFManager: React.FC = () => {
                         size="sm"
                         onClick={() => handlePageChange(currentPage - 1)}
                         disabled={currentPage === 1}
-                        className="flex items-center space-x-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl font-semibold"
+                        className="flex items-center space-x-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl font-semibold disabled:opacity-50 h-10 px-4"
                       >
                         <ArrowLeft className="h-4 w-4" />
                         <span className="hidden sm:inline">Précédent</span>
@@ -703,7 +766,11 @@ export const PDFManager: React.FC = () => {
                               variant={currentPage === pageNum ? "primary" : "secondary"}
                               size="sm"
                               onClick={() => handlePageChange(pageNum)}
-                              className={`w-8 h-8 p-0 rounded-xl font-bold ${currentPage === pageNum ? 'shadow-lg' : 'bg-gray-100 dark:bg-gray-800'}`}
+                              className={`w-10 h-10 p-0 rounded-xl font-bold transition-all ${
+                                currentPage === pageNum 
+                                  ? 'shadow-lg scale-110' 
+                                  : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700'
+                              }`}
                             >
                               {pageNum}
                             </Button>
@@ -716,7 +783,7 @@ export const PDFManager: React.FC = () => {
                         size="sm"
                         onClick={() => handlePageChange(currentPage + 1)}
                         disabled={currentPage === totalPages}
-                        className="flex items-center space-x-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl font-semibold"
+                        className="flex items-center space-x-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl font-semibold disabled:opacity-50 h-10 px-4"
                       >
                         <span className="hidden sm:inline">Suivant</span>
                         <ArrowRight className="h-4 w-4" />
@@ -741,7 +808,7 @@ export const PDFManager: React.FC = () => {
 
         {/* Modal détails réponse */}
         {showDetailsModal && selectedResponseForDetails && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <Card className="max-w-4xl w-full max-h-[90vh] overflow-y-auto bg-white/95 backdrop-blur-sm border-0 shadow-2xl">
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -767,7 +834,7 @@ export const PDFManager: React.FC = () => {
                     }}
                     className="text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-5 w-5" />
                   </Button>
                 </div>
               </CardHeader>

@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { Button } from '../ui/Button';
 import { 
   Camera, 
@@ -42,6 +42,7 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
+  const [isMounted, setIsMounted] = useState(false);
   
   const settings = {
     outputFormat: scanSettings.outputFormat || 'jpeg',
@@ -52,9 +53,10 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
     ...scanSettings
   };
 
-  // Nettoyage automatique
-  React.useEffect(() => {
+  useEffect(() => {
+    setIsMounted(true);
     return () => {
+      setIsMounted(false);
       cleanupCamera();
     };
   }, []);
@@ -72,19 +74,18 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
   }, [stream]);
 
   const startCamera = useCallback(async () => {
+    if (!isMounted) return;
+    
     try {
       setIsLoading(true);
       setCameraError(null);
       
-      // Vérifier la disponibilité
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error('API caméra non disponible');
       }
 
-      // Nettoyer l'ancien flux
       cleanupCamera();
 
-      // Contraintes simples et efficaces
       const constraints: MediaStreamConstraints = {
         video: {
           facingMode: facingMode,
@@ -94,36 +95,41 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
         audio: false
       };
 
-      // Obtenir le flux
       const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
       
-      // Vérifier que le flux est valide
       const videoTracks = mediaStream.getVideoTracks();
       if (videoTracks.length === 0) {
         throw new Error('Aucune piste vidéo disponible');
       }
 
+      if (!isMounted) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        return;
+      }
+
       setStream(mediaStream);
       setIsScanning(true);
       
-      // Attendre que le composant soit rendu
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      // Configurer la vidéo
-      if (videoRef.current) {
+      if (videoRef.current && isMounted) {
         const video = videoRef.current;
         video.srcObject = mediaStream;
         video.autoplay = true;
         video.playsInline = true;
         video.muted = true;
         
-        // Attendre que la vidéo soit prête
         await new Promise<void>((resolve, reject) => {
           const timeout = setTimeout(() => {
             reject(new Error('Timeout: vidéo non prête'));
           }, 5000);
           
           const checkReady = () => {
+            if (!isMounted) {
+              clearTimeout(timeout);
+              reject(new Error('Component unmounted'));
+              return;
+            }
             if (video.videoWidth > 0 && video.videoHeight > 0) {
               clearTimeout(timeout);
               resolve();
@@ -135,14 +141,17 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
           video.onloadedmetadata = checkReady;
           video.oncanplay = checkReady;
           
-          // Vérification immédiate
           checkReady();
         });
       }
       
-      toast.success('📷 Caméra prête !');
+      if (isMounted) {
+        toast.success('📷 Caméra prête !');
+      }
       
     } catch (error: any) {
+      if (!isMounted) return;
+      
       let errorMessage = 'Erreur d\'accès à la caméra';
       
       if (error.name === 'NotAllowedError') {
@@ -153,6 +162,8 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
         errorMessage = 'Caméra occupée. Fermez les autres applications utilisant la caméra.';
       } else if (error.message.includes('Timeout')) {
         errorMessage = 'Caméra trop lente. Essayez de recharger la page.';
+      } else if (error.message.includes('unmounted')) {
+        return;
       } else {
         errorMessage = `Erreur: ${error.message}`;
       }
@@ -161,9 +172,11 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
       setIsScanning(false);
       toast.error(errorMessage);
     } finally {
-      setIsLoading(false);
+      if (isMounted) {
+        setIsLoading(false);
+      }
     }
-  }, [facingMode, cleanupCamera]);
+  }, [facingMode, cleanupCamera, isMounted]);
 
   const stopCamera = useCallback(() => {
     cleanupCamera();
@@ -173,7 +186,7 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
   }, [cleanupCamera]);
 
   const capturePhoto = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) {
+    if (!isMounted || !videoRef.current || !canvasRef.current) {
       toast.error('Caméra non disponible');
       return;
     }
@@ -187,37 +200,35 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
       return;
     }
 
-    // Vérifier que la vidéo a des dimensions
     if (video.videoWidth === 0 || video.videoHeight === 0) {
       toast.error('Vidéo non prête, attendez quelques secondes');
       return;
     }
 
     try {
-      // Configurer le canvas
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
 
-      // Capturer l'image
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Optimiser l'image
       const optimizedImage = optimizeImage(canvas, settings);
       
-      setCapturedImage(optimizedImage);
-      onImageCapture(optimizedImage);
-      stopCamera();
-      
-      toast.success('📷 Document scanné !');
+      if (isMounted) {
+        setCapturedImage(optimizedImage);
+        onImageCapture(optimizedImage);
+        stopCamera();
+        toast.success('📷 Document scanné !');
+      }
     } catch (error) {
-      toast.error('Erreur lors de la capture');
+      if (isMounted) {
+        toast.error('Erreur lors de la capture');
+      }
     }
-  }, [settings, onImageCapture, stopCamera]);
+  }, [settings, onImageCapture, stopCamera, isMounted]);
 
   const optimizeImage = (canvas: HTMLCanvasElement, settings: any): string => {
     const { maxWidth, maxHeight, outputFormat, quality } = settings;
     
-    // Calculer les nouvelles dimensions
     const { width: newWidth, height: newHeight } = calculateDimensions(
       canvas.width, 
       canvas.height, 
@@ -225,24 +236,20 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
       maxHeight
     );
     
-    // Créer un nouveau canvas optimisé
     const optimizedCanvas = document.createElement('canvas');
     const ctx = optimizedCanvas.getContext('2d')!;
     
     optimizedCanvas.width = newWidth;
     optimizedCanvas.height = newHeight;
     
-    // Configuration pour qualité maximale
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     
-    // Fond blanc pour JPEG
     if (outputFormat === 'jpeg') {
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, newWidth, newHeight);
     }
     
-    // Redimensionner l'image
     ctx.drawImage(canvas, 0, 0, newWidth, newHeight);
     
     return optimizedCanvas.toDataURL(`image/${outputFormat}`, quality);
@@ -270,6 +277,8 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
   };
 
   const handleFileUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isMounted) return;
+    
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -280,6 +289,7 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
 
     const reader = new FileReader();
     reader.onload = (e) => {
+      if (!isMounted) return;
       const result = e.target?.result as string;
       setCapturedImage(result);
       onImageCapture(result);
@@ -288,7 +298,7 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
     reader.readAsDataURL(file);
     
     event.target.value = '';
-  }, [onImageCapture]);
+  }, [onImageCapture, isMounted]);
 
   const switchCamera = useCallback(() => {
     setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
@@ -299,20 +309,23 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
   }, [isScanning, stopCamera, startCamera]);
 
   const resetScan = useCallback(() => {
+    if (!isMounted) return;
     setCapturedImage(null);
     onImageCapture('');
-  }, [onImageCapture]);
+  }, [onImageCapture, isMounted]);
 
   const retakePhoto = useCallback(() => {
     resetScan();
     startCamera();
   }, [resetScan, startCamera]);
 
-  // Interface plein écran pour la caméra
+  if (!isMounted) {
+    return <div className="h-64 bg-gray-100 animate-pulse rounded" />;
+  }
+
   if (isScanning) {
     return (
       <div className="fixed inset-0 bg-black z-50 flex flex-col">
-        {/* Header */}
         <div className="absolute top-0 left-0 right-0 z-20 bg-gradient-to-b from-black/90 to-transparent p-4">
           <div className="flex items-center justify-between text-white">
             <div className="flex items-center space-x-3">
@@ -334,9 +347,7 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
           </div>
         </div>
 
-        {/* Zone vidéo */}
         <div className="flex-1 relative overflow-hidden">
-          {/* Gestion des erreurs */}
           {cameraError && (
             <div className="absolute inset-0 bg-red-900/95 backdrop-blur-sm flex items-center justify-center z-30">
               <div className="text-center text-white p-6 max-w-sm">
@@ -366,7 +377,6 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
             </div>
           )}
 
-          {/* Indicateur de chargement */}
           {isLoading && (
             <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-20">
               <div className="text-center text-white">
@@ -377,7 +387,6 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
             </div>
           )}
           
-          {/* Vidéo */}
           <video
             ref={videoRef}
             className="w-full h-full object-cover"
@@ -386,14 +395,11 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
             autoPlay
           />
           
-          {/* Canvas caché */}
           <canvas ref={canvasRef} className="hidden" />
           
-          {/* Guides de composition */}
           {settings.showGuides && (
             <div className="absolute inset-0 pointer-events-none z-10">
               <svg className="w-full h-full">
-                {/* Grille */}
                 <defs>
                   <pattern id="grid" width="33.33%" height="33.33%" patternUnits="userSpaceOnUse">
                     <path d="M 33.33 0 L 0 0 0 33.33" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="1"/>
@@ -401,7 +407,6 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
                 </defs>
                 <rect width="100%" height="100%" fill="url(#grid)" />
                 
-                {/* Cadre principal */}
                 <rect 
                   x="10%" 
                   y="15%" 
@@ -414,7 +419,6 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
                   rx="8"
                 />
                 
-                {/* Coins */}
                 <g stroke="rgba(0,255,0,1)" strokeWidth="4" fill="none">
                   <path d="M 12% 17% L 15% 17% L 15% 20%" />
                   <path d="M 88% 17% L 85% 17% L 85% 20%" />
@@ -423,7 +427,6 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
                 </g>
               </svg>
               
-              {/* Instructions */}
               <div className="absolute top-6 left-1/2 transform -translate-x-1/2 bg-black/80 backdrop-blur-sm text-white px-4 py-2 rounded-lg text-sm font-medium">
                 📄 Centrez votre document dans le cadre vert
               </div>
@@ -431,10 +434,8 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
           )}
         </div>
 
-        {/* Contrôles en bas */}
         <div className="absolute bottom-0 left-0 right-0 z-20 bg-gradient-to-t from-black/90 to-transparent p-6">
           <div className="flex items-center justify-center space-x-6">
-            {/* Changer caméra */}
             <button
               type="button"
               onClick={switchCamera}
@@ -444,7 +445,6 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
               <RotateCcw className="h-5 w-5" />
             </button>
 
-            {/* Capture */}
             <button
               type="button"
               onClick={capturePhoto}
@@ -454,7 +454,6 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
               <Camera className="h-6 w-6" />
             </button>
 
-            {/* Galerie */}
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -469,7 +468,6 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
           </div>
         </div>
 
-        {/* Input file caché */}
         <input
           ref={fileInputRef}
           type="file"
@@ -481,10 +479,8 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
     );
   }
 
-  // Interface normale
   return (
     <div className="space-y-4">
-      {/* Image capturée */}
       {capturedImage ? (
         <div className="relative group">
           <div className="bg-white dark:bg-gray-800 rounded-xl border-2 border-emerald-200 dark:border-emerald-700 overflow-hidden shadow-lg">
@@ -494,7 +490,6 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
               className="w-full h-auto max-h-64 object-contain"
             />
             
-            {/* Actions au survol */}
             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all duration-200 flex items-center justify-center opacity-0 group-hover:opacity-100">
               <div className="flex space-x-2">
                 <button
@@ -517,7 +512,6 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
             </div>
           </div>
           
-          {/* Informations */}
           <div className="mt-3 p-3 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg border border-emerald-200 dark:border-emerald-800">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2 text-emerald-700 dark:text-emerald-300">
@@ -531,15 +525,12 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
           </div>
         </div>
       ) : (
-        /* Interface de démarrage */
         <div className="border-2 border-dashed border-emerald-300 dark:border-emerald-600 rounded-xl p-6 text-center bg-emerald-50/50 dark:bg-emerald-900/10 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors">
           <div className="space-y-4">
-            {/* Icône */}
             <div className="mx-auto w-16 h-16 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center">
               <Camera className="h-8 w-8 text-emerald-600 dark:text-emerald-400" />
             </div>
             
-            {/* Titre */}
             <div>
               <h3 className="text-lg font-bold text-emerald-900 dark:text-emerald-300 mb-2">
                 Scanner un document
@@ -549,7 +540,6 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
               </p>
             </div>
             
-            {/* Actions */}
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <button
                 type="button"
@@ -580,7 +570,6 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
               </button>
             </div>
             
-            {/* Fonctionnalités */}
             <div className="grid grid-cols-3 gap-3 mt-6 text-xs text-emerald-600 dark:text-emerald-400">
               <div className="text-center">
                 <div className="w-8 h-8 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center mx-auto mb-1">
@@ -605,7 +594,6 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
         </div>
       )}
       
-      {/* Input file caché */}
       <input
         ref={fileInputRef}
         type="file"
@@ -614,7 +602,6 @@ export const DocumentScanner: React.FC<DocumentScannerProps> = ({
         className="hidden"
       />
       
-      {/* Message d'obligation */}
       {required && !capturedImage && (
         <p className="text-sm text-red-600 font-medium">
           ⚠️ Le scan de document est obligatoire

@@ -40,7 +40,10 @@ Deno.serve(async (req: Request) => {
     }
 
     // Vérifier si l'utilisateur est super admin
-    const isSuperAdmin = user.email === 'admin@signfast.com' || user.email?.endsWith('@admin.signfast.com');
+    const isSuperAdmin = user.email === 'admin@signfast.com' || 
+                         user.email === 'admin@signfast.pro' || 
+                         user.email?.endsWith('@admin.signfast.com') ||
+                         user.email?.endsWith('@admin.signfast.pro');
     
     if (!isSuperAdmin) {
       console.log('❌ Accès refusé pour:', user.email);
@@ -52,6 +55,7 @@ Deno.serve(async (req: Request) => {
 
     console.log('✅ Super admin confirmé:', user.email);
     
+    // Récupérer tous les utilisateurs
     const { data: authUsers, error: listError } = await supabaseAdmin.auth.admin.listUsers();
 
     if (listError) {
@@ -64,6 +68,7 @@ Deno.serve(async (req: Request) => {
 
     console.log('👥 Utilisateurs auth récupérés:', authUsers.users.length);
     
+    // Enrichir avec les données des autres tables
     const usersWithData = await Promise.all(
       authUsers.users.map(async (authUser) => {
         try {
@@ -91,21 +96,35 @@ Deno.serve(async (req: Request) => {
             .or('expires_at.is.null,expires_at.gt.now()')
             .maybeSingle();
 
-          const { count: formsCount } = await supabaseAdmin.from('forms').select('id', { count: 'exact' }).eq('user_id', authUser.id);
-          const { count: templatesCount } = await supabaseAdmin.from('pdf_templates').select('id', { count: 'exact' }).eq('user_id', authUser.id);
-          const { count: pdfsCount } = await supabaseAdmin.from('pdf_storage').select('id', { count: 'exact' }).eq('user_id', authUser.id);
-          
-          // Compter les réponses pour les formulaires de cet utilisateur
-          const { count: responsesCount } = await supabaseAdmin
-            .from('responses')
+          const { count: formsCount } = await supabaseAdmin
+            .from('forms')
             .select('id', { count: 'exact' })
-            .in('form_id', 
-              await supabaseAdmin
-                .from('forms')
-                .select('id')
-                .eq('user_id', authUser.id)
-                .then(({ data }) => data?.map(f => f.id) || [])
-            );
+            .eq('user_id', authUser.id);
+
+          const { count: templatesCount } = await supabaseAdmin
+            .from('pdf_templates')
+            .select('id', { count: 'exact' })
+            .eq('user_id', authUser.id);
+
+          const { count: pdfsCount } = await supabaseAdmin
+            .from('pdf_storage')
+            .select('id', { count: 'exact' })
+            .eq('user_id', authUser.id);
+          
+          // Compter les réponses
+          const { data: userForms } = await supabaseAdmin
+            .from('forms')
+            .select('id')
+            .eq('user_id', authUser.id);
+
+          const formIds = userForms?.map(f => f.id) || [];
+          
+          const { count: responsesCount } = formIds.length > 0 
+            ? await supabaseAdmin
+                .from('form_responses')
+                .select('id', { count: 'exact' })
+                .in('form_id', formIds)
+            : { count: 0 };
 
           return {
             id: authUser.id,

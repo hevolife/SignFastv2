@@ -37,7 +37,7 @@ export const Dashboard: React.FC = () => {
   const { forms, totalCount: totalForms, loading: formsLoading, fetchPage } = useOptimizedForms();
   const { templates, loading: templatesLoading } = usePDFTemplates();
   const { isSubscribed, hasSecretCode, secretCodeType } = useSubscription();
-  const { forms: formsLimits, pdfTemplates: templatesLimits, savedPdfs: savedPdfsLimits } = useLimits();
+  const { forms: formsLimits, pdfTemplates: templatesLimits, savedPdfs: savedPdfsLimits, refreshLimits } = useLimits();
   const [realWeeklyData, setRealWeeklyData] = React.useState([]);
   const [totalResponses, setTotalResponses] = React.useState(0);
   const [loadingActivity, setLoadingActivity] = React.useState(true);
@@ -56,6 +56,14 @@ export const Dashboard: React.FC = () => {
       setLoadingActivity(false);
     }
   }, [user, isDemoMode, forms]);
+
+  // 🔥 Rafraîchir les limites au montage
+  React.useEffect(() => {
+    if (user) {
+      console.log('🔄 Rafraîchissement des limites au montage du Dashboard');
+      refreshLimits();
+    }
+  }, [user, refreshLimits]);
 
   const loadRealActivityData = async () => {
     try {
@@ -103,7 +111,7 @@ export const Dashboard: React.FC = () => {
 
       // Récupérer les réponses de la semaine
       const { data: weeklyResponses, error: weeklyError } = await supabase
-        .from('responses')
+        .from('form_responses')
         .select('created_at')
         .in('form_id', userFormIds)
         .gte('created_at', monday.toISOString())
@@ -118,7 +126,7 @@ export const Dashboard: React.FC = () => {
 
       // Récupérer le total des réponses
       const { count: totalCount, error: totalError } = await supabase
-        .from('responses')
+        .from('form_responses')
         .select('id', { count: 'exact', head: true })
         .in('form_id', userFormIds);
 

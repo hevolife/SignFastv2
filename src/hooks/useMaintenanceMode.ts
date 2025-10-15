@@ -21,17 +21,24 @@ export const useMaintenanceMode = () => {
         return;
       }
 
+      // CORRECTION: Vérifier si la table existe avant de faire la requête
       const { data, error } = await supabase
         .from('system_settings')
         .select('value')
         .eq('key', 'maintenance_mode')
-        .single();
+        .maybeSingle();
 
       if (error) {
-        console.warn('Erreur vérification maintenance mode:', error);
-        setIsMaintenanceMode(false);
+        // Si la table n'existe pas (404), on désactive simplement le mode maintenance
+        if (error.code === 'PGRST116' || error.message?.includes('does not exist')) {
+          console.warn('Table system_settings non trouvée, mode maintenance désactivé');
+          setIsMaintenanceMode(false);
+        } else {
+          console.warn('Erreur vérification maintenance mode:', error);
+          setIsMaintenanceMode(false);
+        }
       } else {
-        setIsMaintenanceMode(data.value === 'true');
+        setIsMaintenanceMode(data?.value === 'true');
       }
     } catch (error) {
       console.warn('Erreur réseau lors de la vérification du mode maintenance:', error);
@@ -68,6 +75,10 @@ export const useMaintenanceMode = () => {
         .maybeSingle();
 
       if (checkError) {
+        // Si la table n'existe pas, on ne peut pas toggle
+        if (checkError.code === 'PGRST116' || checkError.message?.includes('does not exist')) {
+          throw new Error('La table system_settings n\'existe pas. Veuillez créer la migration.');
+        }
         console.error('❌ Erreur vérification setting:', checkError);
         throw new Error('Erreur lors de la vérification du paramètre');
       }

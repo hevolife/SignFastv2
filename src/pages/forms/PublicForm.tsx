@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { Form, FormField } from '../../types/form';
-import { OptimizedPDFService } from '../../services/optimizedPDFService';
+import { PDFGenerationService } from '../../services/pdfGenerationService';
 import { OptimizedImageProcessor } from '../../utils/optimizedImageProcessor';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -37,7 +37,6 @@ export const PublicForm: React.FC = () => {
     if (!id) return;
 
     try {
-      // Première requête : récupérer le formulaire
       const { data: formData, error: formError } = await supabase
         .from('forms')
         .select('*')
@@ -52,7 +51,6 @@ export const PublicForm: React.FC = () => {
 
       setForm(formData);
 
-      // Deuxième requête : récupérer le profil utilisateur
       if (formData.user_id) {
         const { data: profileData, error: profileError } = await supabase
           .from('user_profiles')
@@ -71,7 +69,7 @@ export const PublicForm: React.FC = () => {
         setPasswordVerified(true);
       }
     } catch (error) {
-      console.error('Erreur récupération formulaire:', error);
+      console.error('❌ Erreur récupération formulaire:', error);
       toast.error('Erreur lors du chargement du formulaire');
     } finally {
       setLoading(false);
@@ -90,7 +88,6 @@ export const PublicForm: React.FC = () => {
   };
 
   const handleInputChange = async (fieldId: string, value: any, field: FormField) => {
-    // Traitement spécial pour les images
     if (field.type === 'file' && value instanceof File && value.type.startsWith('image/')) {
       try {
         toast.loading('Optimisation de l\'image...', { duration: 3000 });
@@ -98,15 +95,13 @@ export const PublicForm: React.FC = () => {
         setFormData(prev => ({ ...prev, [field.label]: optimizedImage }));
         toast.success('Image optimisée');
       } catch (error) {
-        console.error('Erreur optimisation image:', error);
+        console.error('❌ Erreur optimisation image:', error);
         toast.error('Erreur lors de l\'optimisation de l\'image');
       }
       return;
     }
 
-    // Traitement spécial pour les dates avec masque
     if ((field.type === 'date' || field.type === 'birthdate') && field.validation?.mask && typeof value === 'string') {
-      // Appliquer le masque à la valeur de date
       const maskedValue = applyDateMask(value, field.validation.mask);
       setFormData(prev => ({ ...prev, [field.label]: maskedValue }));
       return;
@@ -115,15 +110,12 @@ export const PublicForm: React.FC = () => {
     setFormData(prev => ({ ...prev, [field.label]: value }));
   };
 
-  // Fonction pour appliquer un masque à une date
   const applyDateMask = (dateValue: string, mask: string): string => {
     if (!dateValue || !mask) return dateValue;
     
-    // Si c'est une date au format ISO (YYYY-MM-DD), la convertir selon le masque
     if (dateValue.match(/^\d{4}-\d{2}-\d{2}$/)) {
       const [year, month, day] = dateValue.split('-');
       
-      // Appliquer le masque spécifié
       if (mask === '99/99/9999') {
         return `${day}/${month}/${year}`;
       } else if (mask === '99-99-9999') {
@@ -131,7 +123,6 @@ export const PublicForm: React.FC = () => {
       } else if (mask === '99.99.9999') {
         return `${day}.${month}.${year}`;
       } else {
-        // Format par défaut français
         return `${day}/${month}/${year}`;
       }
     }
@@ -144,7 +135,6 @@ export const PublicForm: React.FC = () => {
     
     if (!form) return;
 
-    // Validation des champs obligatoires
     const missingFields = form.fields?.filter(field => 
       field.required && (!formData[field.label] || formData[field.label] === '')
     ) || [];
@@ -157,9 +147,13 @@ export const PublicForm: React.FC = () => {
     setSubmitting(true);
 
     try {
-      // ÉTAPE 1: Sauvegarder la réponse (OBLIGATOIRE)
+      console.log('📝 Début soumission formulaire');
+      console.log('📋 Données formulaire:', formData);
+      console.log('⚙️ Paramètres formulaire:', form.settings);
+
+      // ÉTAPE 1: Sauvegarder la réponse
       const { data: response, error: responseError } = await supabase
-        .from('responses')
+        .from('form_responses')
         .insert([{
           form_id: form.id,
           data: formData,
@@ -170,21 +164,27 @@ export const PublicForm: React.FC = () => {
         .single();
 
       if (responseError) {
+        console.error('❌ Erreur sauvegarde réponse:', responseError);
         throw new Error(`Erreur sauvegarde: ${responseError.message}`);
       }
 
-      // ÉTAPE 2: Générer le PDF si configuré (OPTIONNEL mais bloquant si activé)
-      let pdfGenerated = false;
+      console.log('✅ Réponse sauvegardée:', response.id);
+
+      // ÉTAPE 2: Générer le PDF si configuré
       if (form.settings?.generatePdf && form.settings?.pdfTemplateId) {
+        console.log('📄 Génération PDF activée');
+        console.log('📄 Template ID:', form.settings.pdfTemplateId);
+        
         try {
-          // Enrichir les données avec les informations du formulaire pour les masques
           const enrichedFormData = {
             ...formData,
             _form_metadata: { fields: form.fields },
             _original_form_fields: form.fields
           };
           
-          const pdfBytes = await OptimizedPDFService.generatePDF({
+          console.log('📄 Appel PDFGenerationService.generatePDF...');
+          
+          const pdfBytes = await PDFGenerationService.generatePDF({
             templateId: form.settings.pdfTemplateId,
             formTitle: form.title,
             responseId: response.id,
@@ -192,34 +192,42 @@ export const PublicForm: React.FC = () => {
             saveToServer: form.settings.savePdfToServer,
           });
 
-          // Créer l'URL de téléchargement
+          console.log('✅ PDF généré, taille:', pdfBytes.length, 'bytes');
+
           const blob = new Blob([pdfBytes], { type: 'application/pdf' });
           const url = URL.createObjectURL(blob);
           setGeneratedPdfUrl(url);
-          pdfGenerated = true;
           
-        } catch (pdfError) {
-          // Si la génération PDF est configurée, c'est un échec critique
-          // Supprimer la réponse pour éviter les données incohérentes
+          console.log('✅ URL PDF créée');
+          
+        } catch (pdfError: any) {
+          console.error('❌ ERREUR GÉNÉRATION PDF:', pdfError);
+          console.error('❌ Message:', pdfError.message);
+          console.error('❌ Stack:', pdfError.stack);
+          
+          // Supprimer la réponse en cas d'erreur PDF
           try {
             await supabase
-              .from('responses')
+              .from('form_responses')
               .delete()
               .eq('id', response.id);
+            console.log('🗑️ Réponse supprimée suite à erreur PDF');
           } catch (deleteError) {
+            console.error('❌ Erreur suppression réponse:', deleteError);
           }
           
           throw new Error(`Erreur génération PDF: ${pdfError.message}`);
         }
+      } else {
+        console.log('ℹ️ Génération PDF non activée pour ce formulaire');
       }
 
-      // ÉTAPE 3: Confirmation finale (seulement si tout s'est bien passé)
-      // SEULEMENT maintenant, marquer comme soumis et afficher le succès
       setSubmitted(true);
       toast.success('✅ Formulaire envoyé et traité avec succès !');
       
     } catch (error: any) {
-      // Messages d'erreur spécifiques selon le type d'erreur
+      console.error('❌ ERREUR GLOBALE:', error);
+      
       if (error.message?.includes('sauvegarde')) {
         toast.error('❌ Erreur lors de la sauvegarde de vos données. Veuillez réessayer.');
       } else if (error.message?.includes('PDF')) {
@@ -439,10 +447,9 @@ export const PublicForm: React.FC = () => {
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) {
-                  // Vérifier la taille du fichier si configurée
                   if (field.validation?.maxFileSize && file.size > field.validation.maxFileSize * 1024 * 1024) {
                     toast.error(`Le fichier ne doit pas dépasser ${field.validation.maxFileSize} MB`);
-                    e.target.value = ''; // Reset input
+                    e.target.value = '';
                     return;
                   }
                   
@@ -453,7 +460,6 @@ export const PublicForm: React.FC = () => {
               className="w-full px-4 py-3 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-white shadow-sm transition-all duration-200 cursor-pointer hover:border-blue-400"
             />
             
-            {/* Informations sur les restrictions */}
             {(field.validation?.acceptedFileTypes || field.validation?.maxFileSize) && (
               <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
                 <div className="text-xs text-blue-800 dark:text-blue-200 space-y-1">
@@ -574,7 +580,6 @@ export const PublicForm: React.FC = () => {
   if (submitted) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-green-50 to-blue-50 dark:from-emerald-900/20 dark:via-green-900/20 dark:to-blue-900/20 flex items-center justify-center py-12 px-4 relative overflow-hidden">
-        {/* Background décoratif animé */}
         <div className="absolute inset-0">
           <div className="absolute top-20 left-20 w-64 h-64 bg-gradient-to-br from-green-200/30 to-emerald-200/30 rounded-full blur-3xl animate-pulse"></div>
           <div className="absolute bottom-20 right-20 w-80 h-80 bg-gradient-to-br from-blue-200/30 to-indigo-200/30 rounded-full blur-3xl animate-pulse delay-1000"></div>
@@ -582,7 +587,6 @@ export const PublicForm: React.FC = () => {
           <div className="absolute bottom-1/3 right-1/3 w-24 h-24 bg-gradient-to-br from-pink-200/30 to-purple-200/30 rounded-full blur-xl animate-pulse delay-1500"></div>
         </div>
         
-        {/* Particules flottantes */}
         <div className="absolute inset-0 pointer-events-none">
           <div className="absolute top-10 left-10 w-2 h-2 bg-green-400 rounded-full animate-ping"></div>
           <div className="absolute top-32 right-16 w-3 h-3 bg-blue-400 rounded-full animate-ping delay-1000"></div>
@@ -594,22 +598,17 @@ export const PublicForm: React.FC = () => {
         <div className="relative max-w-2xl w-full mx-auto">
           <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-2xl hover:shadow-3xl transition-all duration-500 animate-in slide-in-from-bottom-8 duration-1000">
             <CardContent className="text-center py-12 px-8 relative overflow-hidden">
-              {/* Background gradient subtil */}
               <div className="absolute inset-0 bg-gradient-to-br from-green-50/50 to-blue-50/50 dark:from-green-900/10 dark:to-blue-900/10"></div>
               
               <div className="relative">
-                {/* Animation de succès avec cercles concentriques */}
                 <div className="relative mb-8 animate-in zoom-in duration-1000 delay-300">
                   <div className="w-32 h-32 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-2xl relative">
-                    {/* Cercles d'animation */}
                     <div className="absolute inset-0 rounded-full bg-green-400 animate-ping opacity-30"></div>
                     <div className="absolute inset-2 rounded-full bg-green-300 animate-ping opacity-20 delay-300"></div>
                     <div className="absolute inset-4 rounded-full bg-green-200 animate-ping opacity-10 delay-600"></div>
                     
-                    {/* Icône principale */}
                     <CheckCircle className="h-16 w-16 text-white animate-pulse" />
                     
-                    {/* Étoiles scintillantes */}
                     <div className="absolute -top-3 -right-3 text-yellow-400 animate-bounce">
                       <span className="text-2xl">✨</span>
                     </div>
@@ -622,14 +621,12 @@ export const PublicForm: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Titre principal avec animation */}
                 <h1 className="text-4xl sm:text-5xl font-bold text-gray-900 dark:text-white mb-6 animate-in slide-in-from-top duration-1000 delay-500">
                   <span className="bg-gradient-to-r from-green-600 via-emerald-600 to-blue-600 bg-clip-text text-transparent">
                     Parfait !
                   </span>
                 </h1>
                 
-                {/* Message de confirmation */}
                 <div className="space-y-4 mb-8 animate-in slide-in-from-bottom duration-1000 delay-700">
                   <p className="text-xl sm:text-2xl text-gray-800 dark:text-gray-200 font-semibold">
                     🎉 Votre formulaire a été envoyé avec succès !
@@ -639,7 +636,6 @@ export const PublicForm: React.FC = () => {
                   </p>
                 </div>
 
-                {/* Informations de confirmation */}
                 <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 p-6 rounded-2xl border border-green-200 dark:border-green-800 mb-8 shadow-lg animate-in fade-in duration-1000 delay-1000">
                   <div className="flex items-center justify-center space-x-3 mb-4">
                     <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center shadow-lg">
@@ -669,7 +665,6 @@ export const PublicForm: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Bouton de téléchargement PDF avec animation */}
                 {generatedPdfUrl && (
                   <div className="animate-in slide-in-from-bottom duration-1000 delay-1200">
                     <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 p-6 rounded-2xl border border-blue-200 dark:border-blue-800 mb-6 shadow-lg">
@@ -696,7 +691,6 @@ export const PublicForm: React.FC = () => {
                   </div>
                 )}
 
-                {/* Message de fin avec branding */}
                 <div className="animate-in fade-in duration-1000 delay-1500">
                   <div className="flex items-center justify-center space-x-3 text-gray-500 dark:text-gray-400">
                     <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-md">
@@ -709,39 +703,6 @@ export const PublicForm: React.FC = () => {
                   <p className="text-xs text-gray-400 mt-2">
                     Signature électronique française • Sécurisé et conforme
                   </p>
-                </div>
-
-                {/* Confettis CSS */}
-                <style jsx>{`
-                  @keyframes confetti-fall {
-                    0% { transform: translateY(-100vh) rotate(0deg); opacity: 1; }
-                    100% { transform: translateY(100vh) rotate(360deg); opacity: 0; }
-                  }
-                  
-                  .confetti {
-                    position: absolute;
-                    width: 10px;
-                    height: 10px;
-                    background: linear-gradient(45deg, #10b981, #3b82f6);
-                    animation: confetti-fall 3s linear infinite;
-                  }
-                  
-                  .confetti:nth-child(1) { left: 10%; animation-delay: 0s; background: #10b981; }
-                  .confetti:nth-child(2) { left: 20%; animation-delay: 0.5s; background: #3b82f6; }
-                  .confetti:nth-child(3) { left: 30%; animation-delay: 1s; background: #8b5cf6; }
-                  .confetti:nth-child(4) { left: 40%; animation-delay: 1.5s; background: #f59e0b; }
-                  .confetti:nth-child(5) { left: 50%; animation-delay: 2s; background: #ef4444; }
-                  .confetti:nth-child(6) { left: 60%; animation-delay: 0.3s; background: #06b6d4; }
-                  .confetti:nth-child(7) { left: 70%; animation-delay: 0.8s; background: #84cc16; }
-                  .confetti:nth-child(8) { left: 80%; animation-delay: 1.3s; background: #ec4899; }
-                  .confetti:nth-child(9) { left: 90%; animation-delay: 1.8s; background: #6366f1; }
-                `}</style>
-                
-                {/* Confettis animés */}
-                <div className="absolute inset-0 pointer-events-none overflow-hidden">
-                  {[...Array(9)].map((_, i) => (
-                    <div key={i} className="confetti"></div>
-                  ))}
                 </div>
               </div>
             </CardContent>
@@ -806,9 +767,7 @@ export const PublicForm: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 dark:from-gray-900 dark:to-blue-900/20 py-8 px-4">
       
       <div className="max-w-2xl mx-auto">
-        {/* Header du formulaire simplifié */}
         <div className="text-center mb-8">
-          {/* Logo de l'entreprise si disponible */}
           {userProfile?.logo_url ? (
             <div className="mb-6">
               <img
@@ -842,14 +801,12 @@ export const PublicForm: React.FC = () => {
             </p>
           )}
           
-          {/* Badge de sécurité simplifié */}
           <div className="inline-flex items-center space-x-2 bg-green-100 dark:bg-green-900/30 px-3 py-2 rounded-full text-green-800 dark:text-green-300 text-sm font-medium shadow-sm">
             <span className="text-lg">🔒</span>
             <span>Sécurisé et conforme</span>
           </div>
         </div>
 
-        {/* Formulaire simplifié */}
         <Card className="bg-white dark:bg-gray-800 shadow-xl border-0">
           
           <CardContent className="p-6 sm:p-8">
@@ -861,7 +818,6 @@ export const PublicForm: React.FC = () => {
                 </div>
               ))}
               
-              {/* Section de soumission simplifiée */}
               <div className="pt-6 border-t border-gray-200 dark:border-gray-700">
                 
                 <Button
@@ -882,7 +838,6 @@ export const PublicForm: React.FC = () => {
                   )}
                 </Button>
                 
-                {/* Message de confiance simplifié */}
                 <div className="text-center mt-4">
                   <div className="flex items-center justify-center space-x-3 text-gray-500 dark:text-gray-400">
                     <span className="text-sm font-medium">

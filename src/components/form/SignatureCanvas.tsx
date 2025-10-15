@@ -17,16 +17,24 @@ export const SignatureCanvas: React.FC<SignatureCanvasProps> = ({
   const [isDrawing, setIsDrawing] = useState(false);
   const [isEmpty, setIsEmpty] = useState(!value);
   const [lastPoint, setLastPoint] = useState<{ x: number; y: number } | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
+    setIsMounted(true);
+    return () => {
+      setIsMounted(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isMounted) return;
+    
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Configuration du canvas pour une meilleure qualité
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Définir la taille réelle du canvas
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     
@@ -35,27 +43,26 @@ export const SignatureCanvas: React.FC<SignatureCanvasProps> = ({
     
     ctx.scale(dpr, dpr);
     
-    // Configuration du style de dessin
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = 2;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.imageSmoothingEnabled = true;
 
-    // Fond blanc
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
 
-    // Charger la signature existante si elle existe
     if (value && value !== '') {
       const img = new Image();
       img.onload = () => {
-        ctx.drawImage(img, 0, 0, canvas.width / dpr, canvas.height / dpr);
-        setIsEmpty(false);
+        if (isMounted && canvasRef.current) {
+          ctx.drawImage(img, 0, 0, canvas.width / dpr, canvas.height / dpr);
+          setIsEmpty(false);
+        }
       };
       img.src = value;
     }
-  }, [value]);
+  }, [value, isMounted]);
 
   const getCoordinates = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = canvasRef.current;
@@ -79,6 +86,7 @@ export const SignatureCanvas: React.FC<SignatureCanvasProps> = ({
   };
 
   const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!isMounted) return;
     e.preventDefault();
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -97,7 +105,7 @@ export const SignatureCanvas: React.FC<SignatureCanvasProps> = ({
   };
 
   const draw = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!isDrawing || !lastPoint) return;
+    if (!isDrawing || !lastPoint || !isMounted) return;
     e.preventDefault();
 
     const canvas = canvasRef.current;
@@ -108,7 +116,6 @@ export const SignatureCanvas: React.FC<SignatureCanvasProps> = ({
 
     const { x, y } = getCoordinates(e);
 
-    // Dessiner une ligne lisse
     ctx.beginPath();
     ctx.moveTo(lastPoint.x, lastPoint.y);
     ctx.lineTo(x, y);
@@ -118,55 +125,66 @@ export const SignatureCanvas: React.FC<SignatureCanvasProps> = ({
   };
 
   const stopDrawing = () => {
-    if (!isDrawing) return;
+    if (!isDrawing || !isMounted) return;
     setIsDrawing(false);
     setLastPoint(null);
     saveSignature();
   };
 
   const saveSignature = () => {
+    if (!isMounted) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     try {
-      // Utiliser la compression optimisée pour signatures
       const rawSignature = canvas.toDataURL('image/png', 1.0);
       
-      // Compression asynchrone
       import('../../utils/optimizedImageProcessor').then(({ OptimizedImageProcessor }) => {
+        if (!isMounted) return;
         OptimizedImageProcessor.processSignature(rawSignature).then(compressedSignature => {
-          onSignatureChange(compressedSignature);
-          setIsEmpty(false);
-        }).catch(error => {
-          onSignatureChange(rawSignature);
-          setIsEmpty(false);
+          if (isMounted) {
+            onSignatureChange(compressedSignature);
+            setIsEmpty(false);
+          }
+        }).catch(() => {
+          if (isMounted) {
+            onSignatureChange(rawSignature);
+            setIsEmpty(false);
+          }
         });
       }).catch(() => {
-        // Fallback si module non disponible
-        onSignatureChange(rawSignature);
-        setIsEmpty(false);
+        if (isMounted) {
+          onSignatureChange(rawSignature);
+          setIsEmpty(false);
+        }
       });
       
     } catch (error) {
-      onSignatureChange('');
-      setIsEmpty(true);
+      if (isMounted) {
+        onSignatureChange('');
+        setIsEmpty(true);
+      }
     }
   };
 
   const clearSignature = () => {
+    if (!isMounted) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Effacer et remettre le fond blanc
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
     setIsEmpty(true);
     onSignatureChange('');
   };
+
+  if (!isMounted) {
+    return <div className="h-32 bg-gray-100 animate-pulse rounded" />;
+  }
 
   return (
     <div className="space-y-3">

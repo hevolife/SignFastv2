@@ -6,14 +6,50 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 if (!supabaseUrl || !supabaseKey || supabaseUrl === 'your-project-url' || supabaseKey === 'your-anon-key' || supabaseUrl.includes('placeholder') || supabaseKey.includes('placeholder')) {
 }
 
-// Custom fetch function to handle session expiration
+// 🔧 Retry avec exponential backoff
+const retryFetch = async (url: RequestInfo | URL, options?: RequestInit, maxRetries = 3): Promise<Response> => {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      
+      // Si succès, retourner immédiatement
+      if (response.ok || response.status < 500) {
+        return response;
+      }
+      
+      // Si erreur serveur, retry
+      lastError = new Error(`Server error: ${response.status}`);
+      
+    } catch (error: any) {
+      lastError = error;
+      
+      // Si c'est une erreur QUIC, attendre avant de retry
+      if (error.message?.includes('QUIC') || error.message?.includes('Failed to fetch')) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 5000); // Max 5s
+        console.log(`⏳ Retry ${attempt + 1}/${maxRetries} après ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      
+      // Autre erreur, throw immédiatement
+      throw error;
+    }
+  }
+  
+  // Tous les retries ont échoué
+  throw lastError || new Error('Max retries reached');
+};
+
+// Custom fetch function to handle session expiration and QUIC errors
 const customFetch = async (url: RequestInfo | URL, options?: RequestInit) => {
   try {
-    const response = await fetch(url, options);
+    // 🚀 Utiliser retry fetch au lieu de fetch direct
+    const response = await retryFetch(url, options, 3);
     
     // Handle 500 errors gracefully
     if (response.status === 500) {
-      // Return a mock successful response to prevent crashes
       return new Response(JSON.stringify({ data: null, error: null }), {
         status: 200,
         statusText: 'OK (Fallback)',
@@ -35,7 +71,6 @@ const customFetch = async (url: RequestInfo | URL, options?: RequestInit) => {
       try {
         const body = await response.clone().json();
         if (body.code === 'session_not_found') {
-          // Session expired, try to refresh token instead of signing out
           try {
             const { data, error } = await supabase.auth.refreshSession();
             if (error) {
@@ -56,7 +91,6 @@ const customFetch = async (url: RequestInfo | URL, options?: RequestInit) => {
       try {
         const errorData = JSON.parse(errorText);
         if (errorData.code === 'PGRST202') {
-          // RPC function not found - return structured error without throwing
           return {
             ok: false,
             status: 404,
@@ -70,8 +104,18 @@ const customFetch = async (url: RequestInfo | URL, options?: RequestInit) => {
     }
     
     return response;
-  } catch (error) {
-    // Re-throw the error to let the calling code handle it
+  } catch (error: any) {
+    // 🔥 Si erreur QUIC après tous les retries, retourner données vides
+    if (error.message?.includes('QUIC') || error.message?.includes('Failed to fetch')) {
+      console.warn('⚠️ QUIC error après retries, retour données vides');
+      return new Response(JSON.stringify({ data: [], error: null, count: 0 }), {
+        status: 200,
+        statusText: 'OK (QUIC Fallback)',
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    // Re-throw other errors
     throw error;
   }
 };
@@ -91,7 +135,6 @@ const isSupabaseConfigured = () => {
 // Safe fetch wrapper that handles configuration issues
 const safeFetch = async (url: RequestInfo | URL, options?: RequestInit) => {
   if (!isSupabaseConfigured()) {
-    // Return a mock response instead of throwing to prevent crashes
     return new Response(JSON.stringify({ data: null, error: null }), {
       status: 200,
       statusText: 'OK',
@@ -108,7 +151,6 @@ const safeFetch = async (url: RequestInfo | URL, options?: RequestInit) => {
     try {
       const response = await customFetch(url, options);
       
-      // If we get a 404 with PGRST205 (table not found), return a proper error response
       if (response.status === 404 || response.status === 406) {
         const body = await response.clone().text();
         if (body.includes('PGRST205') || body.includes('Could not find the table') || body.includes('sub_accounts')) {

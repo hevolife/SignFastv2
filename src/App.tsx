@@ -85,13 +85,13 @@ const ErrorFallback: React.FC<{ error: Error; resetErrorBoundary: () => void }> 
   );
 };
 
-const AppContent: React.FC = () => {
+// Composant pour les routes protégées avec AuthProvider
+const ProtectedAppContent: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
   const { isSubAccount, loading: subAccountLoading } = useSubAccount();
   const { isMaintenanceMode, loading: maintenanceLoading } = useMaintenanceMode();
-  const isPublicForm = location.pathname.startsWith('/form/');
   const isSubAccountPage = location.pathname.startsWith('/sub-account/');
   const [isMobile, setIsMobile] = React.useState(false);
   
@@ -109,17 +109,15 @@ const AppContent: React.FC = () => {
     const isPWA = pwaManager.isPWAMode();
     
     if (isPWA) {
-      // Ne pas rediriger si on est en cours de chargement du sous-compte
       if (subAccountLoading) {
         return;
       }
       
-      // Ne pas rediriger si on est connecté en tant que sous-compte
       if (isSubAccount && isSubAccountPage) {
         return;
       }
       
-      if (!user && !isSubAccount && !isPublicForm && !isSubAccountPage && location.pathname !== '/login' && location.pathname !== '/signup') {
+      if (!user && !isSubAccount && !isSubAccountPage && location.pathname !== '/login' && location.pathname !== '/signup') {
         console.log('📱 PWA: Utilisateur non connecté, redirection vers login');
         navigate('/login?pwa=true', { replace: true });
       }
@@ -129,7 +127,7 @@ const AppContent: React.FC = () => {
         navigate(isSubAccount ? '/sub-account/dashboard' : '/dashboard', { replace: true });
       }
     }
-  }, [user, isSubAccount, subAccountLoading, location.pathname, isPublicForm, isSubAccountPage, navigate]);
+  }, [user, isSubAccount, subAccountLoading, location.pathname, isSubAccountPage, navigate]);
 
   const dndBackend = isMobile ? TouchBackend : HTML5Backend;
   const dndOptions = isMobile ? { enableMouseEvents: true } : {};
@@ -142,12 +140,12 @@ const AppContent: React.FC = () => {
 
   return (
     <DndProvider backend={dndBackend} options={dndOptions}>
-      <div className={`min-h-screen bg-gray-50 dark:bg-gray-900 ${isPublicForm ? '' : 'pb-16 md:pb-0'}`}>
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 pb-16 md:pb-0">
         <DemoTimer />
         <WelcomeModal />
         <SupportNotificationToast />
         <TutorialTrigger />
-        {!isPublicForm && !isSubAccountPage && <Navbar />}
+        {!isSubAccountPage && <Navbar />}
         <main>
           <Routes>
             <Route path="/" element={<Home />} />
@@ -193,7 +191,6 @@ const AppContent: React.FC = () => {
                 </ProtectedRoute>
               }
             />
-            <Route path="/form/:id" element={<PublicForm />} />
             <Route
               path="/pdf/templates"
               element={
@@ -285,6 +282,49 @@ const AppContent: React.FC = () => {
   );
 };
 
+// Composant pour les routes publiques SANS AuthProvider
+const PublicRoutes: React.FC = () => {
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      <Routes>
+        <Route path="/form/:id" element={<PublicForm />} />
+      </Routes>
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 4000,
+          style: {
+            background: '#363636',
+            color: '#fff',
+          },
+        }}
+      />
+    </div>
+  );
+};
+
+// Composant principal qui route entre public et protégé
+const AppRouter: React.FC = () => {
+  const location = useLocation();
+  const isPublicRoute = location.pathname.startsWith('/form/');
+
+  // Routes publiques sans AuthProvider
+  if (isPublicRoute) {
+    return <PublicRoutes />;
+  }
+
+  // Routes protégées avec AuthProvider
+  return (
+    <AuthProvider>
+      <SubAccountProvider>
+        <NotificationProvider>
+          <ProtectedAppContent />
+        </NotificationProvider>
+      </SubAccountProvider>
+    </AuthProvider>
+  );
+};
+
 function App() {
   return (
     <ErrorBoundary
@@ -303,15 +343,9 @@ function App() {
       }}
     >
       <DemoProvider>
-        <AuthProvider>
-          <SubAccountProvider>
-            <NotificationProvider>
-              <Router>
-                <AppContent />
-              </Router>
-            </NotificationProvider>
-          </SubAccountProvider>
-        </AuthProvider>
+        <Router>
+          <AppRouter />
+        </Router>
       </DemoProvider>
     </ErrorBoundary>
   );

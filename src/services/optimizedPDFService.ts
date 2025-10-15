@@ -13,7 +13,42 @@ export interface StoredPDF {
 
 export class OptimizedPDFService {
   private static cache = new Map<string, { data: StoredPDF[]; timestamp: number }>();
+  private static countCache = new Map<string, { count: number; timestamp: number }>();
   private static CACHE_DURATION = 30000; // 30 secondes
+
+  /**
+   * 🆕 Comptage ultra-rapide des PDFs utilisateur avec cache
+   */
+  static async countUserPDFs(userId: string): Promise<number> {
+    try {
+      // Vérifier le cache
+      const cached = this.countCache.get(userId);
+      if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
+        return cached.count;
+      }
+
+      // ✅ CORRECTION: Utiliser pdf_storage au lieu de saved_pdfs
+      const { count, error } = await supabase
+        .from('pdf_storage')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId);
+
+      if (error) {
+        console.error('❌ Erreur comptage PDFs:', error);
+        return 0;
+      }
+
+      const totalCount = count || 0;
+
+      // Mise en cache
+      this.countCache.set(userId, { count: totalCount, timestamp: Date.now() });
+
+      return totalCount;
+    } catch (error) {
+      console.error('❌ Erreur comptage PDFs:', error);
+      return 0;
+    }
+  }
 
   /**
    * Récupération paginée optimisée avec cache
@@ -32,7 +67,7 @@ export class OptimizedPDFService {
       // Vérifier le cache
       if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
         const { count } = await supabase
-          .from('saved_pdfs')
+          .from('pdf_storage')
           .select('id', { count: 'exact', head: true })
           .eq('user_id', userId);
         
@@ -41,7 +76,7 @@ export class OptimizedPDFService {
 
       // Requête de comptage
       let countQuery = supabase
-        .from('saved_pdfs')
+        .from('pdf_storage')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', userId);
 
@@ -54,7 +89,7 @@ export class OptimizedPDFService {
       // Requête de données avec sélection minimale
       const offset = (page - 1) * limit;
       let dataQuery = supabase
-        .from('saved_pdfs')
+        .from('pdf_storage')
         .select('id, file_name, form_title, template_name, file_size, created_at, pdf_content')
         .eq('user_id', userId)
         .range(offset, offset + limit - 1);
@@ -100,14 +135,15 @@ export class OptimizedPDFService {
   static async deletePDF(pdfId: string): Promise<void> {
     try {
       const { error } = await supabase
-        .from('saved_pdfs')
+        .from('pdf_storage')
         .delete()
         .eq('id', pdfId);
 
       if (error) throw error;
 
-      // Invalider tout le cache
+      // Invalider tout le cache (données + comptage)
       this.cache.clear();
+      this.countCache.clear();
     } catch (error) {
       console.error('❌ Erreur suppression PDF:', error);
       throw error;
@@ -160,6 +196,7 @@ export class OptimizedPDFService {
    */
   static clearCache(): void {
     this.cache.clear();
+    this.countCache.clear();
   }
 
   /**
