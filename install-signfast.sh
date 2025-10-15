@@ -3,7 +3,7 @@
 #############################################
 # 🚀 Script d'Installation Automatique SignFast
 # Pour VPS Ubuntu 24.04 LTS
-# Version: 2.0.1 - Fix Git Ownership
+# Version: 3.0.0 - Fix Git avec ZIP Download
 #############################################
 
 set -e  # Arrêter en cas d'erreur
@@ -22,7 +22,7 @@ LOG_FILE="/var/log/signfast-install.log"
 APP_DIR="/var/www/signfast"
 APP_USER="signfast"
 NODE_VERSION="20"
-GITHUB_REPO="https://github.com/hevolife/SignFastv2.git"
+GITHUB_REPO="https://github.com/hevolife/SignFastv2"
 GITHUB_BRANCH="main"
 
 #############################################
@@ -298,58 +298,77 @@ create_directories() {
 }
 
 #############################################
-# Étape 7: Clonage depuis GitHub
+# Étape 7: Téléchargement depuis GitHub (ZIP)
 #############################################
 
-clone_from_github() {
-    print_step "📥 Étape 7/11: Clonage du projet depuis GitHub"
+download_from_github() {
+    print_step "📥 Étape 7/11: Téléchargement du projet depuis GitHub"
     
-    log "Clonage du repository $GITHUB_REPO..."
+    log "Téléchargement du repository $GITHUB_REPO..."
     log_info "Branche: $GITHUB_BRANCH"
     
-    # Supprimer le répertoire s'il existe déjà
-    if [ -d "$APP_DIR/.git" ]; then
-        log_warning "Le repository existe déjà, mise à jour..."
-        cd "$APP_DIR"
-        
-        # Configurer Git safe.directory
-        log "Configuration de Git safe.directory..."
-        git config --global --add safe.directory "$APP_DIR" >> "$LOG_FILE" 2>&1
-        sudo -u "$APP_USER" git config --global --add safe.directory "$APP_DIR" >> "$LOG_FILE" 2>&1
-        
-        sudo -u "$APP_USER" git fetch origin >> "$LOG_FILE" 2>&1
-        sudo -u "$APP_USER" git checkout "$GITHUB_BRANCH" >> "$LOG_FILE" 2>&1
-        sudo -u "$APP_USER" git pull origin "$GITHUB_BRANCH" >> "$LOG_FILE" 2>&1
+    # URL du ZIP GitHub
+    ZIP_URL="${GITHUB_REPO}/archive/refs/heads/${GITHUB_BRANCH}.zip"
+    TEMP_ZIP="/tmp/signfast-${GITHUB_BRANCH}.zip"
+    TEMP_DIR="/tmp/signfast-extract-$$"
+    
+    log "Téléchargement du fichier ZIP..."
+    if wget -q --show-progress "$ZIP_URL" -O "$TEMP_ZIP" >> "$LOG_FILE" 2>&1; then
+        log_success "Fichier ZIP téléchargé"
     else
-        # Créer un répertoire temporaire pour le clone
-        TEMP_DIR="/tmp/signfast-clone-$$"
-        mkdir -p "$TEMP_DIR"
-        
-        # Cloner en tant qu'utilisateur signfast directement
-        log "Clonage du repository..."
-        sudo -u "$APP_USER" git clone -b "$GITHUB_BRANCH" "$GITHUB_REPO" "$TEMP_DIR" >> "$LOG_FILE" 2>&1
-        
-        # Déplacer les fichiers vers le répertoire final
-        log "Déplacement des fichiers..."
-        sudo -u "$APP_USER" cp -r "$TEMP_DIR/." "$APP_DIR/" >> "$LOG_FILE" 2>&1
-        
-        # Nettoyer le répertoire temporaire
-        rm -rf "$TEMP_DIR"
-        
-        # Configurer Git safe.directory pour les deux utilisateurs
-        log "Configuration de Git safe.directory..."
-        git config --global --add safe.directory "$APP_DIR" >> "$LOG_FILE" 2>&1
-        sudo -u "$APP_USER" git config --global --add safe.directory "$APP_DIR" >> "$LOG_FILE" 2>&1
+        log_error "Échec du téléchargement du ZIP"
+        log_info "URL: $ZIP_URL"
+        exit 1
     fi
     
-    log_success "Repository cloné avec succès"
+    log "Extraction du fichier ZIP..."
+    mkdir -p "$TEMP_DIR"
+    if unzip -q "$TEMP_ZIP" -d "$TEMP_DIR" >> "$LOG_FILE" 2>&1; then
+        log_success "Fichier ZIP extrait"
+    else
+        log_error "Échec de l'extraction du ZIP"
+        exit 1
+    fi
     
-    # Afficher le commit actuel
+    # Le contenu est dans un sous-dossier SignFastv2-main
+    EXTRACTED_DIR="$TEMP_DIR/SignFastv2-${GITHUB_BRANCH}"
+    
+    if [ ! -d "$EXTRACTED_DIR" ]; then
+        log_error "Le dossier extrait n'existe pas: $EXTRACTED_DIR"
+        log_info "Contenu de $TEMP_DIR:"
+        ls -la "$TEMP_DIR" >> "$LOG_FILE" 2>&1
+        exit 1
+    fi
+    
+    log "Copie des fichiers vers $APP_DIR..."
+    # Copier tout le contenu
+    cp -r "$EXTRACTED_DIR/." "$APP_DIR/" >> "$LOG_FILE" 2>&1
+    
+    # Ajuster les permissions
+    chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+    
+    # Nettoyer
+    log "Nettoyage des fichiers temporaires..."
+    rm -f "$TEMP_ZIP"
+    rm -rf "$TEMP_DIR"
+    
+    log_success "Projet téléchargé et installé avec succès"
+    
+    # Initialiser git pour les futures mises à jour
     cd "$APP_DIR"
+    if [ ! -d ".git" ]; then
+        log "Initialisation du repository Git..."
+        sudo -u "$APP_USER" git init >> "$LOG_FILE" 2>&1
+        sudo -u "$APP_USER" git remote add origin "${GITHUB_REPO}.git" >> "$LOG_FILE" 2>&1
+        sudo -u "$APP_USER" git fetch origin >> "$LOG_FILE" 2>&1
+        sudo -u "$APP_USER" git checkout -b "$GITHUB_BRANCH" >> "$LOG_FILE" 2>&1
+        sudo -u "$APP_USER" git reset --hard "origin/$GITHUB_BRANCH" >> "$LOG_FILE" 2>&1
+        log_success "Repository Git initialisé"
+    fi
+    
+    # Afficher les informations
     CURRENT_COMMIT=$(sudo -u "$APP_USER" git rev-parse --short HEAD 2>/dev/null || echo "N/A")
-    COMMIT_MESSAGE=$(sudo -u "$APP_USER" git log -1 --pretty=%B 2>/dev/null || echo "N/A")
     log_info "Commit actuel: $CURRENT_COMMIT"
-    log_info "Message: $COMMIT_MESSAGE"
 }
 
 #############################################
@@ -823,7 +842,7 @@ main() {
     install_nginx
     configure_firewall
     create_directories
-    clone_from_github
+    download_from_github  # Changé de clone_from_github à download_from_github
     configure_application
     install_and_build
     configure_nginx
