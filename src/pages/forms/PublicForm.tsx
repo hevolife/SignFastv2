@@ -29,36 +29,61 @@ export const PublicForm: React.FC = () => {
 
   useEffect(() => {
     if (id) {
+      console.log('🔍 Form ID from URL:', id);
       fetchForm();
+    } else {
+      console.error('❌ No form ID in URL!');
     }
   }, [id]);
 
   const fetchForm = async () => {
-    if (!id) return;
+    if (!id) {
+      console.error('❌ Cannot fetch form: no ID');
+      return;
+    }
 
     try {
-      const { data: formData, error: formError } = await supabase
+      console.log('🔍 Fetching public form:', id);
+      
+      // 🔥 Créer un client Supabase ANONYME explicite
+      const anonClient = supabase;
+      
+      const { data: formData, error: formError } = await anonClient
         .from('forms')
         .select('*')
         .eq('id', id)
         .eq('is_published', true)
         .single();
 
-      if (formError || !formData) {
+      if (formError) {
+        console.error('❌ Error fetching form:', formError);
         toast.error('Formulaire non trouvé ou non publié');
         return;
       }
 
+      if (!formData) {
+        toast.error('Formulaire non trouvé');
+        return;
+      }
+
+      console.log('✅ Form loaded:', formData.title);
       setForm(formData);
 
+      // 🔥 CHARGER LE PROFIL UTILISATEUR (LOGO)
       if (formData.user_id) {
-        const { data: profileData, error: profileError } = await supabase
+        console.log('🔍 Fetching user profile for logo...');
+        
+        const { data: profileData, error: profileError } = await anonClient
           .from('user_profiles')
           .select('logo_url, company_name, first_name, last_name')
           .eq('user_id', formData.user_id)
           .single();
 
-        if (!profileError && profileData) {
+        if (profileError) {
+          console.error('⚠️ Error fetching profile:', profileError);
+        } else if (profileData) {
+          console.log('✅ Profile loaded:', profileData.company_name || 'No company name');
+          console.log('🖼️ Logo URL:', profileData.logo_url || 'No logo');
           setUserProfile(profileData);
         }
       }
@@ -133,7 +158,11 @@ export const PublicForm: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!form) return;
+    if (!form || !id) {
+      console.error('❌ Cannot submit: no form or ID');
+      toast.error('Erreur: formulaire non chargé');
+      return;
+    }
 
     const missingFields = form.fields?.filter(field => 
       field.required && (!formData[field.label] || formData[field.label] === '')
@@ -147,19 +176,26 @@ export const PublicForm: React.FC = () => {
     setSubmitting(true);
 
     try {
-      console.log('📝 Début soumission formulaire');
+      console.log('📝 Début soumission formulaire PUBLIC (anonyme)');
+      console.log('📋 Form ID:', id);
       console.log('📋 Données formulaire:', formData);
-      console.log('⚙️ Paramètres formulaire:', form.settings);
 
-      // ÉTAPE 1: Sauvegarder la réponse
-      const { data: response, error: responseError } = await supabase
+      // 🔥 UTILISER LE CLIENT ANONYME EXPLICITE
+      const anonClient = supabase;
+
+      // 🔥 ÉTAPE 1: Sauvegarder la réponse (ANONYME)
+      const responsePayload = {
+        form_id: id, // ✅ Utiliser l'ID de l'URL
+        data: formData,
+        ip_address: null,
+        user_agent: navigator.userAgent,
+      };
+
+      console.log('📤 Payload envoyé:', responsePayload);
+
+      const { data: response, error: responseError } = await anonClient
         .from('form_responses')
-        .insert([{
-          form_id: form.id,
-          data: formData,
-          ip_address: null,
-          user_agent: navigator.userAgent,
-        }])
+        .insert([responsePayload])
         .select()
         .single();
 
@@ -173,7 +209,6 @@ export const PublicForm: React.FC = () => {
       // ÉTAPE 2: Générer le PDF si configuré
       if (form.settings?.generatePdf && form.settings?.pdfTemplateId) {
         console.log('📄 Génération PDF activée');
-        console.log('📄 Template ID:', form.settings.pdfTemplateId);
         
         try {
           const enrichedFormData = {
@@ -181,8 +216,6 @@ export const PublicForm: React.FC = () => {
             _form_metadata: { fields: form.fields },
             _original_form_fields: form.fields
           };
-          
-          console.log('📄 Appel PDFGenerationService.generatePDF...');
           
           const pdfBytes = await PDFGenerationService.generatePDF({
             templateId: form.settings.pdfTemplateId,
@@ -198,16 +231,12 @@ export const PublicForm: React.FC = () => {
           const url = URL.createObjectURL(blob);
           setGeneratedPdfUrl(url);
           
-          console.log('✅ URL PDF créée');
-          
         } catch (pdfError: any) {
           console.error('❌ ERREUR GÉNÉRATION PDF:', pdfError);
-          console.error('❌ Message:', pdfError.message);
-          console.error('❌ Stack:', pdfError.stack);
           
           // Supprimer la réponse en cas d'erreur PDF
           try {
-            await supabase
+            await anonClient
               .from('form_responses')
               .delete()
               .eq('id', response.id);
@@ -218,22 +247,18 @@ export const PublicForm: React.FC = () => {
           
           throw new Error(`Erreur génération PDF: ${pdfError.message}`);
         }
-      } else {
-        console.log('ℹ️ Génération PDF non activée pour ce formulaire');
       }
 
       setSubmitted(true);
-      toast.success('✅ Formulaire envoyé et traité avec succès !');
+      toast.success('✅ Formulaire envoyé avec succès !');
       
     } catch (error: any) {
       console.error('❌ ERREUR GLOBALE:', error);
       
       if (error.message?.includes('sauvegarde')) {
-        toast.error('❌ Erreur lors de la sauvegarde de vos données. Veuillez réessayer.');
+        toast.error('❌ Erreur lors de la sauvegarde. Veuillez réessayer.');
       } else if (error.message?.includes('PDF')) {
         toast.error('❌ Erreur lors de la génération du PDF. Veuillez réessayer.');
-      } else if (error.message?.includes('network') || error.message?.includes('fetch')) {
-        toast.error('❌ Problème de connexion. Vérifiez votre réseau et réessayez.');
       } else {
         toast.error('❌ Erreur lors de l\'envoi du formulaire. Veuillez réessayer.');
       }
@@ -774,6 +799,10 @@ export const PublicForm: React.FC = () => {
                 src={userProfile.logo_url}
                 alt={userProfile.company_name || 'Logo entreprise'}
                 className="max-w-24 max-h-24 object-contain mx-auto mb-4 rounded-xl shadow-lg"
+                onError={(e) => {
+                  console.error('❌ Erreur chargement logo:', userProfile.logo_url);
+                  e.currentTarget.style.display = 'none';
+                }}
               />
               {userProfile.company_name && (
                 <p className="text-lg font-semibold text-gray-800 dark:text-gray-200">

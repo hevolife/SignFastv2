@@ -21,23 +21,32 @@ export const usePDFTemplates = () => {
 
   const fetchTemplates = async (page: number = 1, limit: number = 10) => {
     try {
+      console.log('📄 [usePDFTemplates] ========== DÉBUT RÉCUPÉRATION ==========');
+      console.log('📄 [usePDFTemplates] User:', user?.id);
+      console.log('📄 [usePDFTemplates] Page:', page, 'Limit:', limit);
+      
       if (user) {
         // L'utilisateur effectif est déjà géré par le contexte Auth
         const targetUserId = user.id;
 
         try {
           // Utilisateur connecté : récupérer ses templates depuis Supabase
-          console.log('📄 Récupération templates (pas de cache):', targetUserId);
+          console.log('📄 [usePDFTemplates] Récupération templates pour:', targetUserId);
           const result = await PDFTemplateService.getUserTemplates(targetUserId, page, limit);
+          
+          console.log('📄 [usePDFTemplates] ========== RÉSULTAT ==========');
+          console.log('📄 [usePDFTemplates] Templates trouvés:', result.templates.length);
+          console.log('📄 [usePDFTemplates] Total count:', result.totalCount);
+          console.log('📄 [usePDFTemplates] Templates:', JSON.stringify(result.templates, null, 2));
+          
           setTemplates(result.templates);
           setTotalCount(result.totalCount);
           setTotalPages(result.totalPages);
         } catch (supabaseError) {
-          console.warn('📄 Erreur Supabase templates:', supabaseError);
+          console.warn('📄 [usePDFTemplates] Erreur Supabase templates:', supabaseError);
           // Vérifier si c'est une erreur de réseau
           if (supabaseError instanceof TypeError && supabaseError.message === 'Failed to fetch') {
             // Vous pouvez ajouter une notification toast ici si nécessaire
-          } else {
           }
           
           // Pas de fallback cache - données vides en cas d'erreur
@@ -47,11 +56,13 @@ export const usePDFTemplates = () => {
         }
       } else {
         // Utilisateur non connecté : données vides
+        console.log('📄 [usePDFTemplates] Pas d\'utilisateur connecté');
         setTemplates([]);
         setTotalCount(0);
         setTotalPages(0);
       }
     } catch (error) {
+      console.error('📄 [usePDFTemplates] Erreur globale:', error);
       setTemplates([]);
       setTotalCount(0);
       setTotalPages(0);

@@ -21,15 +21,21 @@ export class PDFGenerationService {
       console.log('📄 Template ID:', templateId);
       console.log('📄 Response ID:', responseId);
 
-      // 1. Récupérer le template
+      // 1. Récupérer le template avec .maybeSingle() pour éviter l'erreur multiple rows
       const { data: template, error: templateError } = await supabase
         .from('pdf_templates')
         .select('*')
         .eq('id', templateId)
-        .single();
+        .maybeSingle(); // ✅ Utiliser maybeSingle() au lieu de single()
 
-      if (templateError || !template) {
-        throw new Error(`Template non trouvé: ${templateError?.message || 'ID invalide'}`);
+      if (templateError) {
+        console.error('❌ Erreur récupération template:', templateError);
+        throw new Error(`Erreur récupération template: ${templateError.message}`);
+      }
+
+      if (!template) {
+        console.error('❌ Template non trouvé:', templateId);
+        throw new Error(`Template non trouvé avec l'ID: ${templateId}`);
       }
 
       console.log('✅ Template récupéré:', template.name);

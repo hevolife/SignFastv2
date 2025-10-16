@@ -8,15 +8,19 @@ import { Crown, AlertTriangle, Zap } from 'lucide-react';
 import { stripeConfig } from '../../stripe-config';
 
 export const SubscriptionBanner: React.FC = () => {
-  const { isSubscribed, hasSecretCode, loading: subscriptionLoading } = useSubscription();
+  const { isSubscribed, hasSecretCode, secretCodeType, loading: subscriptionLoading } = useSubscription();
   const { forms, pdfTemplates, savedPdfs, loading: limitsLoading } = useLimits();
 
-  // Ne pas afficher si abonné (Stripe OU code secret) ou en cours de chargement
-  if (subscriptionLoading || limitsLoading || isSubscribed || hasSecretCode) {
+  // 🔥 Ne pas afficher si abonné OU code secret (lifetime/unlimited)
+  const isPremium = isSubscribed || hasSecretCode || secretCodeType === 'lifetime' || secretCodeType === 'unlimited';
+  
+  if (subscriptionLoading || limitsLoading || isPremium) {
     return null;
   }
 
-  const isNearLimit = !forms.canCreate || !pdfTemplates.canCreate || !savedPdfs.canSave;
+  const isNearLimit = forms.current >= forms.max - 1 || 
+                      pdfTemplates.current >= pdfTemplates.max - 1 || 
+                      savedPdfs.current >= savedPdfs.max - 2;
 
   const product = stripeConfig.products[0];
 
@@ -37,9 +41,9 @@ export const SubscriptionBanner: React.FC = () => {
                 {isNearLimit ? 'Limites atteintes' : 'Version gratuite'}
               </h3>
               <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
-                <div>📝 Formulaires: {forms.current}/{forms.max === Infinity ? '∞' : forms.max}</div>
-                <div>📄 Templates PDF: {pdfTemplates.current}/{pdfTemplates.max === Infinity ? '∞' : pdfTemplates.max}</div>
-                <div>💾 PDFs sauvegardés: {savedPdfs.current}/{savedPdfs.max === Infinity ? '∞' : savedPdfs.max}</div>
+                <div>📝 Formulaires: {forms.current}/{forms.max}</div>
+                <div>📄 Templates PDF: {pdfTemplates.current}/{pdfTemplates.max}</div>
+                <div>💾 PDFs sauvegardés: {savedPdfs.current}/{savedPdfs.max}</div>
                 <div className="pt-1 text-blue-600 dark:text-blue-400 font-medium">
                   🚀 Passez à {product.name} pour {product.price}€/mois
                 </div>

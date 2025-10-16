@@ -16,7 +16,6 @@ export const NewForm: React.FC = () => {
   const [formDescription, setFormDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const { createForm } = useOptimizedForms();
-  const { isDemoMode } = useDemo();
   const navigate = useNavigate();
 
   const handleBasicInfo = (e: React.FormEvent) => {
@@ -32,11 +31,6 @@ export const NewForm: React.FC = () => {
     if (fields.length === 0) {
       toast.error('Ajoutez au moins un champ à votre formulaire');
       return;
-    }
-
-    // Vérifier les limites en mode démo
-    if (isDemoMode) {
-      // Cette vérification sera gérée par le hook useDemoForms
     }
 
     setSaving(true);
