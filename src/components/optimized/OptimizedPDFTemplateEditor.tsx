@@ -44,37 +44,53 @@ export const OptimizedPDFTemplateEditor: React.FC<OptimizedPDFTemplateEditorProp
   const [actualFormVariables, setActualFormVariables] = useState<string[]>(formVariables);
   const [draggedFieldType, setDraggedFieldType] = useState<PDFField['type'] | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [isPdfLoading, setIsPdfLoading] = useState(false); // 🔥 NOUVEAU : État de chargement PDF
   const pdfViewerRef = useRef<OptimizedPDFViewerRef>(null);
 
-  // Charger PDF existant
+  // 🔥 NOUVEAU : Charger PDF existant avec gestion d'état
   useEffect(() => {
-    if (existingPdfUrl && !pdfFile) {
+    if (existingPdfUrl && !pdfFile && !isPdfLoading) {
       loadExistingPdf();
     }
   }, [existingPdfUrl]);
 
-  // Initialiser les champs
+  // 🔥 MODIFIÉ : Initialiser les champs SEULEMENT quand tout est prêt
   useEffect(() => {
-    if (pdfFile && initialFields.length > 0 && !isInitialized && pdfDimensions.length > 0) {
+    if (pdfFile && initialFields.length > 0 && !isInitialized && pdfDimensions.length > 0 && !isPdfLoading) {
+      console.log('✅ Initialisation des champs:', initialFields.length);
+      // Délai pour s'assurer que le PDF est complètement rendu
       setTimeout(() => {
         setFields(initialFields);
         setIsInitialized(true);
-      }, 500);
+      }, 800); // 🔥 Augmenté à 800ms pour plus de sécurité
     }
-  }, [pdfFile, initialFields, isInitialized, pdfDimensions]);
+  }, [pdfFile, initialFields, isInitialized, pdfDimensions, isPdfLoading]);
 
   const loadExistingPdf = async () => {
-    if (!existingPdfUrl) return;
+    if (!existingPdfUrl || isPdfLoading) return;
+    
+    setIsPdfLoading(true); // 🔥 NOUVEAU : Marquer comme en cours de chargement
     
     try {
+      console.log('📥 Chargement PDF existant...');
       const response = await fetch(existingPdfUrl);
       const blob = await response.blob();
       const file = new File([blob], templateName || 'template.pdf', { type: 'application/pdf' });
+      
+      // 🔥 NOUVEAU : Attendre un peu avant de définir le fichier
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
       setPdfFile(file);
       toast.success('PDF existant chargé');
+      console.log('✅ PDF existant chargé');
     } catch (error) {
-      console.error('Erreur chargement PDF:', error);
+      console.error('❌ Erreur chargement PDF:', error);
       toast.error('Erreur lors du chargement du PDF');
+    } finally {
+      // 🔥 NOUVEAU : Attendre un peu avant de marquer comme terminé
+      setTimeout(() => {
+        setIsPdfLoading(false);
+      }, 500);
     }
   };
 
@@ -86,11 +102,23 @@ export const OptimizedPDFTemplateEditor: React.FC<OptimizedPDFTemplateEditorProp
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file && file.type === 'application/pdf') {
-      setPdfFile(file);
+      setIsPdfLoading(true); // 🔥 NOUVEAU
+      
+      // 🔥 NOUVEAU : Réinitialiser complètement l'état
       setFields([]);
       setSelectedField(null);
       setIsInitialized(false);
-      toast.success('PDF chargé avec succès');
+      setPdfDimensions([]);
+      
+      // 🔥 NOUVEAU : Attendre un peu avant de charger le nouveau PDF
+      setTimeout(() => {
+        setPdfFile(file);
+        toast.success('PDF chargé avec succès');
+        
+        setTimeout(() => {
+          setIsPdfLoading(false);
+        }, 500);
+      }, 300);
     } else {
       toast.error('Veuillez sélectionner un fichier PDF valide');
     }
@@ -199,7 +227,7 @@ export const OptimizedPDFTemplateEditor: React.FC<OptimizedPDFTemplateEditorProp
             <div className="flex items-center justify-center space-x-4">
               <Button
                 onClick={handleSave}
-                disabled={!pdfFile || fields.length === 0}
+                disabled={!pdfFile || fields.length === 0 || isPdfLoading}
                 className="bg-white text-purple-600 hover:bg-gray-100 font-bold"
               >
                 <Save className="h-4 w-4 mr-2" />
@@ -281,10 +309,11 @@ export const OptimizedPDFTemplateEditor: React.FC<OptimizedPDFTemplateEditorProp
               </p>
               <Button 
                 onClick={() => document.getElementById('pdf-file-input')?.click()}
+                disabled={isPdfLoading}
                 className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold"
               >
                 <Upload className="h-5 w-5 mr-2" />
-                Choisir un fichier PDF
+                {isPdfLoading ? 'Chargement...' : 'Choisir un fichier PDF'}
               </Button>
               <input
                 id="pdf-file-input"
@@ -292,6 +321,7 @@ export const OptimizedPDFTemplateEditor: React.FC<OptimizedPDFTemplateEditorProp
                 accept=".pdf"
                 onChange={handleFileUpload}
                 className="hidden"
+                disabled={isPdfLoading}
               />
             </CardContent>
           </Card>
@@ -304,7 +334,9 @@ export const OptimizedPDFTemplateEditor: React.FC<OptimizedPDFTemplateEditorProp
               </div>
               
               <Card className="h-[800px]">
+                {/* 🔥 NOUVEAU : Key unique pour forcer le remontage lors du changement de PDF */}
                 <OptimizedPDFViewer
+                  key={pdfFile?.name || 'pdf-viewer'}
                   ref={pdfViewerRef}
                   file={pdfFile}
                   onPDFLoaded={handlePDFLoaded}
