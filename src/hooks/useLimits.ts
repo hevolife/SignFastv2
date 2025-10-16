@@ -17,7 +17,7 @@ const FREE_LIMITS = {
 
 export const useLimits = () => {
   const { user } = useAuth();
-  const { isSubscribed, hasSecretCode, secretCodeType, loading: subscriptionLoading } = useSubscription();
+  const { isSubscribed, hasSecretCode } = useSubscription();
   const [limits, setLimits] = useState<Limits>({
     forms: { current: 0, max: FREE_LIMITS.forms },
     pdfTemplates: { current: 0, max: FREE_LIMITS.pdfTemplates },
@@ -26,20 +26,7 @@ export const useLimits = () => {
   const [loading, setLoading] = useState(true);
 
   const fetchLimits = useCallback(async () => {
-    console.log('📊 [useLimits] ========== DÉBUT fetchLimits ==========');
-    console.log('📊 [useLimits] subscriptionLoading:', subscriptionLoading);
-    console.log('📊 [useLimits] isSubscribed:', isSubscribed);
-    console.log('📊 [useLimits] hasSecretCode:', hasSecretCode);
-    console.log('📊 [useLimits] secretCodeType:', secretCodeType);
-
-    // 🔥 ATTENDRE que useSubscription termine son chargement
-    if (subscriptionLoading) {
-      console.log('⏳ [useLimits] En attente de useSubscription...');
-      return;
-    }
-
     if (!user) {
-      console.log('📊 [useLimits] Pas d\'utilisateur');
       setLimits({
         forms: { current: 0, max: FREE_LIMITS.forms },
         pdfTemplates: { current: 0, max: FREE_LIMITS.pdfTemplates },
@@ -50,12 +37,14 @@ export const useLimits = () => {
     }
 
     try {
+      console.log('📊 Chargement des limites pour user:', user.id);
+
       // Vérifier si Supabase est configuré
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
       
       if (!supabaseUrl || !supabaseKey || supabaseUrl.includes('placeholder') || supabaseKey.includes('placeholder')) {
-        console.warn('📊 [useLimits] Supabase non configuré');
+        console.warn('📊 Supabase non configuré, limites par défaut');
         setLimits({
           forms: { current: 0, max: FREE_LIMITS.forms },
           pdfTemplates: { current: 0, max: FREE_LIMITS.pdfTemplates },
@@ -65,96 +54,79 @@ export const useLimits = () => {
         return;
       }
 
-      // 🔥 VÉRIFIER l'accès premium avec les valeurs ACTUELLES
-      const isPremium = isSubscribed || 
-                       hasSecretCode || 
-                       secretCodeType === 'lifetime' || 
-                       secretCodeType === 'unlimited';
-
-      console.log('📊 [useLimits] ========== VÉRIFICATION PREMIUM ==========');
-      console.log('📊 [useLimits] isPremium:', isPremium);
-      console.log('📊 [useLimits] Détails:', {
-        isSubscribed,
-        hasSecretCode,
-        secretCodeType
-      });
-
-      // 🔥 Si premium, retourner des limites infinies SANS compter
-      if (isPremium) {
-        console.log('✅ [useLimits] ========== UTILISATEUR PREMIUM ==========');
-        console.log('✅ [useLimits] Limites infinies appliquées');
-        setLimits({
-          forms: { current: 0, max: Infinity },
-          pdfTemplates: { current: 0, max: Infinity },
-          savedPdfs: { current: 0, max: Infinity },
-        });
-        setLoading(false);
-        return;
-      }
-
-      // 🔥 Sinon, compter les ressources pour utilisateurs gratuits
-      console.log('📊 [useLimits] Utilisateur gratuit, comptage ressources...');
-
-      // Récupérer les IDs des formulaires
+      // 🔥 ÉTAPE 1 : Récupérer les IDs des formulaires de l'utilisateur
+      console.log('📊 Étape 1 : Récupération des formulaires...');
       const { data: userForms, error: formsError } = await supabase
         .from('forms')
         .select('id')
         .eq('user_id', user.id);
 
       if (formsError) {
-        console.error('❌ [useLimits] Erreur formulaires:', formsError);
+        console.error('❌ Erreur récupération formulaires:', formsError);
         throw formsError;
       }
 
       const formIds = (userForms || []).map(f => f.id);
-      console.log('📊 [useLimits] Formulaires:', formIds.length);
+      console.log('📊 Formulaires trouvés:', formIds.length, 'IDs:', formIds);
 
-      // Compter les réponses
+      // 🔥 ÉTAPE 2 : Compter les réponses pour ces formulaires
       let pdfCount = 0;
+      
       if (formIds.length > 0) {
+        console.log('📊 Étape 2 : Comptage des réponses...');
         const { count, error: countError } = await supabase
           .from('form_responses')
           .select('id', { count: 'exact', head: true })
           .in('form_id', formIds);
 
         if (countError) {
-          console.error('❌ [useLimits] Erreur réponses:', countError);
+          console.error('❌ Erreur comptage réponses:', countError);
         } else {
           pdfCount = count || 0;
-          console.log('📊 [useLimits] Réponses:', pdfCount);
+          console.log('✅ Réponses comptées:', pdfCount);
         }
+      } else {
+        console.log('📊 Aucun formulaire, donc 0 réponse');
       }
 
-      // Compter les templates
+      // 🔥 ÉTAPE 3 : Compter les templates
+      console.log('📊 Étape 3 : Comptage des templates...');
       const { count: templatesCount, error: templatesError } = await supabase
         .from('pdf_templates')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', user.id);
 
       if (templatesError) {
-        console.error('❌ [useLimits] Erreur templates:', templatesError);
+        console.error('❌ Erreur comptage templates:', templatesError);
       }
+
+      const isPremium = isSubscribed || hasSecretCode;
 
       const newLimits = {
         forms: {
           current: formIds.length,
-          max: FREE_LIMITS.forms,
+          max: isPremium ? Infinity : FREE_LIMITS.forms,
         },
         pdfTemplates: {
           current: templatesCount || 0,
-          max: FREE_LIMITS.pdfTemplates,
+          max: isPremium ? Infinity : FREE_LIMITS.pdfTemplates,
         },
         savedPdfs: {
           current: pdfCount,
-          max: FREE_LIMITS.savedPdfs,
+          max: isPremium ? Infinity : FREE_LIMITS.savedPdfs,
         },
       };
 
-      console.log('✅ [useLimits] Limites finales (gratuit):', newLimits);
+      console.log('✅ Limites finales:', {
+        forms: `${newLimits.forms.current}/${isPremium ? '∞' : FREE_LIMITS.forms}`,
+        templates: `${newLimits.pdfTemplates.current}/${isPremium ? '∞' : FREE_LIMITS.pdfTemplates}`,
+        pdfs: `${newLimits.savedPdfs.current}/${isPremium ? '∞' : FREE_LIMITS.savedPdfs}`
+      });
+
       setLimits(newLimits);
 
     } catch (error) {
-      console.error('❌ [useLimits] Erreur:', error);
+      console.error('❌ Erreur chargement limites:', error);
       setLimits({
         forms: { current: 0, max: FREE_LIMITS.forms },
         pdfTemplates: { current: 0, max: FREE_LIMITS.pdfTemplates },
@@ -163,7 +135,7 @@ export const useLimits = () => {
     } finally {
       setLoading(false);
     }
-  }, [user, isSubscribed, hasSecretCode, secretCodeType, subscriptionLoading]);
+  }, [user, isSubscribed, hasSecretCode]);
 
   useEffect(() => {
     fetchLimits();
@@ -171,13 +143,7 @@ export const useLimits = () => {
 
   const canCreate = useCallback((type: 'forms' | 'pdfTemplates' | 'savedPdfs'): boolean => {
     const limit = limits[type];
-    const canCreateResource = limit.max === Infinity || limit.current < limit.max;
-    console.log(`📊 [useLimits] canCreate(${type}):`, {
-      current: limit.current,
-      max: limit.max,
-      canCreate: canCreateResource
-    });
-    return canCreateResource;
+    return limit.max === Infinity || limit.current < limit.max;
   }, [limits]);
 
   const refreshLimits = useCallback(() => {
@@ -186,7 +152,7 @@ export const useLimits = () => {
 
   return {
     ...limits,
-    loading: loading || subscriptionLoading,
+    loading,
     canCreate,
     refreshLimits,
   };

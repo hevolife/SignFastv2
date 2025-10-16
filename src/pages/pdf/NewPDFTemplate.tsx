@@ -5,12 +5,14 @@ import { PDFField } from '../../types/pdf';
 import { PDFTemplateService } from '../../services/pdfTemplateService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useDemo } from '../../contexts/DemoContext';
+import { useLimits } from '../../hooks/useLimits';
 import toast from 'react-hot-toast';
 
 export const NewPDFTemplate: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { isDemoMode, createDemoTemplate } = useDemo();
+  const { pdfTemplates: templatesLimits } = useLimits();
   const [saving, setSaving] = useState(false);
   const [linkedFormId, setLinkedFormId] = useState<string | null>(null);
   const [templateName, setTemplateName] = useState<string>('');
@@ -109,6 +111,12 @@ export const NewPDFTemplate: React.FC = () => {
         return;
       }
 
+      // Vérifier les limites
+      if (!templatesLimits.canCreate) {
+        toast.error('Limite de templates atteinte. Passez Pro pour créer plus de templates.');
+        return;
+      }
+
       // Déterminer l'utilisateur cible (gestion impersonation)
       let targetUserId = user!.id;
       const impersonationData = localStorage.getItem('admin_impersonation');
@@ -148,7 +156,7 @@ export const NewPDFTemplate: React.FC = () => {
           toast.success('Template PDF créé avec succès !');
           navigate('/pdf/templates');
         } else {
-          toast.error('Erreur lors de la création du template');
+          toast.error('Limite de templates atteinte en mode démo');
         }
       } else {
         // Mode normal : sauvegarder dans Supabase
@@ -174,6 +182,7 @@ export const NewPDFTemplate: React.FC = () => {
     
     if (formId) {
       toast.success('Formulaire sélectionné ! Il sera lié lors de la sauvegarde.');
+    } else {
     }
   };
 

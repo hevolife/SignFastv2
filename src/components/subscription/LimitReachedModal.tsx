@@ -1,4 +1,5 @@
 import React from 'react';
+import { supabase } from '../../lib/supabase';
 import { Link } from 'react-router-dom';
 import { Button } from '../ui/Button';
 import { Card, CardContent, CardHeader } from '../ui/Card';
@@ -20,8 +21,7 @@ export const LimitReachedModal: React.FC<LimitReachedModalProps> = ({
   currentCount,
   maxCount,
 }) => {
-  // 🔥 Ne jamais afficher si maxCount est infini
-  if (!isOpen || maxCount === Infinity) return null;
+  if (!isOpen) return null;
 
   const limitMessages = {
     forms: {
@@ -56,6 +56,10 @@ export const LimitReachedModal: React.FC<LimitReachedModalProps> = ({
                   {limit.title}
                 </h2>
               </div>
+              
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                {product.description}
+              </p>
             </div>
             <Button variant="ghost" size="sm" onClick={onClose}>
               <X className="h-4 w-4" />
@@ -77,10 +81,6 @@ export const LimitReachedModal: React.FC<LimitReachedModalProps> = ({
                 {product.price}€/mois
               </span>
             </div>
-            
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-              {product.description}
-            </p>
             
             <div className="space-y-2">
               {product.features.map((feature, index) => (

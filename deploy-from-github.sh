@@ -13,7 +13,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-APP_DIR="/var/www/SignFastv2"
+APP_DIR="/var/www/signfast"
 BACKUP_DIR="/var/backups/signfast"
 DATE=$(date +%Y%m%d_%H%M%S)
 LOG_FILE="$APP_DIR/logs/deploy.log"

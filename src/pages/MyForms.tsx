@@ -2,11 +2,16 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { formatDateFR } from '../utils/dateFormatter';
 import { useOptimizedForms } from '../hooks/useOptimizedForms';
+import { useLimits } from '../hooks/useLimits';
+import { useSubscription } from '../hooks/useSubscription';
+import { SubscriptionBanner } from '../components/subscription/SubscriptionBanner';
+import { LimitReachedModal } from '../components/subscription/LimitReachedModal';
 import { DemoWarningBanner } from '../components/demo/DemoWarningBanner';
 import { useDemo } from '../contexts/DemoContext';
+import { stripeConfig } from '../stripe-config';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
-import { Plus, BarChart3, Edit, Trash2, ExternalLink, FileText as FileTextIcon } from 'lucide-react';
+import { Plus, Eye, BarChart3, Edit, Trash2, ExternalLink, Lock, Crown, Sparkles, FileText as FileTextIcon } from 'lucide-react';
 import { ArrowLeft, ArrowRight, Activity } from 'lucide-react';
 import { QrCode } from 'lucide-react';
 import { QRCodeGenerator } from '../components/form/QRCodeGenerator';
@@ -14,13 +19,18 @@ import toast from 'react-hot-toast';
 
 export const MyForms: React.FC = () => {
   const { forms, totalCount, loading, deleteForm, fetchPage } = useOptimizedForms();
+  const { isSubscribed, hasSecretCode } = useSubscription();
+  const { forms: formsLimits } = useLimits();
+  const [showLimitModal, setShowLimitModal] = React.useState(false);
   const { isDemoMode } = useDemo();
   const [currentPage, setCurrentPage] = React.useState(1);
   const [itemsPerPage] = React.useState(10);
+  const product = stripeConfig.products[0];
   const [showQRCode, setShowQRCode] = React.useState(false);
   const [selectedFormForQR, setSelectedFormForQR] = React.useState<{ id: string; title: string } | null>(null);
 
   const totalPages = Math.ceil(totalCount / itemsPerPage);
+
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
@@ -31,9 +41,11 @@ export const MyForms: React.FC = () => {
     if (window.confirm(`Êtes-vous sûr de vouloir supprimer le formulaire "${title}" ?`)) {
       const success = await deleteForm(id);
       if (success) {
+        // Si on supprime le dernier formulaire d'une page, retourner à la page précédente
         if (forms.length === 1 && currentPage > 1) {
           handlePageChange(currentPage - 1);
         } else {
+          // Sinon, recharger la page courante
           fetchPage(currentPage, itemsPerPage);
         }
         toast.success('Formulaire supprimé avec succès');
@@ -47,6 +59,19 @@ export const MyForms: React.FC = () => {
     const link = `${window.location.origin}/form/${id}`;
     navigator.clipboard.writeText(link);
     toast.success('Lien copié dans le presse-papiers !');
+  };
+
+  const handleCreateForm = () => {
+    if (!isDemoMode && !formsLimits.canCreate) {
+      setShowLimitModal(true);
+      return;
+    }
+    
+    if (isDemoMode && forms.length >= 3) {
+      toast.error('Limite de 3 formulaires en mode démo. Créez un compte pour plus !');
+      return;
+    }
+    // Navigation handled by Link component
   };
 
   const handleShowQRCode = (formId: string, formTitle: string) => {
@@ -70,9 +95,17 @@ export const MyForms: React.FC = () => {
               </div>
               <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-4">
                 Mes Formulaires
+                {isSubscribed && (
+                  <span className="block text-lg sm:text-xl text-white/90 font-medium mt-2">
+                    {product.name} • Illimité
+                  </span>
+                )}
               </h1>
               <p className="text-lg sm:text-xl text-white/90 mb-6 max-w-2xl mx-auto">
-                Créez, gérez et analysez vos formulaires en toute simplicité
+                {isSubscribed 
+                  ? `Créez et gérez vos formulaires illimités avec ${product.name}`
+                  : 'Créez, gérez et analysez vos formulaires en toute simplicité'
+                }
               </p>
               
               {totalCount > 0 && (
@@ -84,29 +117,37 @@ export const MyForms: React.FC = () => {
               
               {/* Bouton d'action principal */}
               <div className="mt-8">
-                <Link to="/forms/new">
+                {formsLimits.canCreate ? (
+                  <Link to="/forms/new">
+                    <Button className="bg-white/20 backdrop-blur-sm text-white border border-white/30 hover:bg-white/30 font-bold px-6 py-3 text-lg shadow-xl hover:shadow-2xl transition-all duration-300 hover:-translate-y-0.5">
+                      <Plus className="h-5 w-5 mr-2" />
+                      Nouveau formulaire
+                    </Button>
+                  </Link>
+                ) : (
                   <Button 
+                    onClick={handleCreateForm}
                     className="bg-white/20 backdrop-blur-sm text-white border border-white/30 hover:bg-white/30 font-bold px-6 py-3 text-lg shadow-xl hover:shadow-2xl transition-all duration-300 hover:-translate-y-0.5"
                   >
                     <Plus className="h-5 w-5 mr-2" />
                     Nouveau formulaire
                   </Button>
-                </Link>
+                )}
               </div>
             </div>
           </div>
         </div>
 
         {/* Banners d'alerte */}
-        {isDemoMode && (
-          <div className="mb-8">
-            <DemoWarningBanner />
-          </div>
-        )}
+        <div className="mb-8">
+          {isDemoMode && <DemoWarningBanner />}
+          <SubscriptionBanner />
+        </div>
 
         {forms.length === 0 ? (
           loading ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+              {/* Skeleton cards pendant le chargement */}
               {[1, 2, 3].map((i) => (
                 <Card key={i} className="animate-pulse bg-white/60 backdrop-blur-sm border-0 shadow-lg">
                   <CardHeader>
@@ -136,31 +177,67 @@ export const MyForms: React.FC = () => {
             </div>
           ) : (
             <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-xl">
-              <CardContent className="text-center py-16">
-                <div className="mb-4">
-                  <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-500 text-white rounded-3xl mb-6 shadow-xl">
-                    <Plus className="h-8 w-8" />
-                  </div>
+            <CardContent className="text-center py-16">
+              <div className="mb-4">
+                <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-500 text-white rounded-3xl mb-6 shadow-xl">
+                  <Plus className="h-8 w-8" />
                 </div>
-                <h3 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white mb-4">
-                  Aucun formulaire
-                </h3>
-                <p className="text-gray-600 dark:text-gray-400 mb-8 text-lg">
-                  Créez votre premier formulaire pour commencer à collecter des réponses
-                </p>
+              </div>
+              <h3 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white mb-4">
+                Aucun formulaire
+              </h3>
+              <p className="text-gray-600 dark:text-gray-400 mb-8 text-lg">
+                Créez votre premier formulaire pour commencer à collecter des réponses
+              </p>
+              {formsLimits.canCreate ? (
                 <Link to="/forms/new">
                   <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-bold px-8 py-3 text-lg shadow-xl hover:shadow-2xl transition-all duration-300 hover:-translate-y-0.5">
                     <Plus className="h-5 w-5 mr-2" />
                     Créer mon premier formulaire
                   </Button>
                 </Link>
-              </CardContent>
+              ) : (
+                <Button onClick={handleCreateForm} className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-bold px-8 py-3 text-lg shadow-xl hover:shadow-2xl transition-all duration-300 hover:-translate-y-0.5">
+                  <Plus className="h-5 w-5 mr-2" />
+                  Créer mon premier formulaire
+                </Button>
+              )}
+              {isDemoMode && forms.length >= 3 && (
+                <div className="mt-6 p-4 bg-gradient-to-r from-orange-50 to-yellow-50 dark:from-orange-900/20 dark:to-yellow-900/20 rounded-xl border border-orange-200 dark:border-orange-800 shadow-lg">
+                  <p className="text-sm text-orange-800 dark:text-orange-200">
+                    💡 Limite de 3 formulaires en mode démo. Créez un compte gratuit pour plus !
+                  </p>
+                </div>
+              )}
+            </CardContent>
             </Card>
           )
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-            {forms.map((form) => (
-              <Card key={form.id} className="group relative bg-white/80 backdrop-blur-sm border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:-translate-y-1">
+            {forms.map((form, index) => {
+              const isLocked = !isSubscribed && !hasSecretCode && index >= formsLimits.max && formsLimits.max !== Infinity;
+              
+              return (
+              <Card key={form.id} className={`group relative bg-white/80 backdrop-blur-sm border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 ${isLocked ? 'opacity-75' : ''}`}>
+                {isLocked && (
+                  <div className="absolute inset-0 bg-gradient-to-br from-orange-900/80 to-yellow-900/80 rounded-2xl flex items-center justify-center z-10 backdrop-blur-sm">
+                    <div className="text-center p-4">
+                      <div className="inline-flex items-center justify-center w-16 h-16 bg-white/90 text-orange-600 rounded-3xl mb-4 shadow-xl">
+                        <Lock className="h-6 w-6" />
+                      </div>
+                      <h3 className="text-white font-bold text-lg mb-3">Formulaire verrouillé</h3>
+                      <p className="text-orange-100 text-sm mb-4 font-medium">
+                        Passez à {product.name} pour débloquer
+                      </p>
+                      <Link to="/subscription">
+                        <Button size="sm" className="flex items-center justify-center space-x-2 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white shadow-xl hover:shadow-2xl transition-all duration-300 mx-auto font-bold">
+                          <Crown className="h-4 w-4" />
+                         <span>Passer Pro</span>
+                        </Button>
+                      </Link>
+                    </div>
+                  </div>
+                )}
                 <CardHeader>
                   <div className="flex justify-between items-start">
                     <div className="flex items-center space-x-4 mb-3">
@@ -201,6 +278,7 @@ export const MyForms: React.FC = () => {
                         variant="ghost" 
                         size="sm" 
                         className="w-full flex items-center justify-center space-x-1 bg-gradient-to-r from-orange-500 to-red-500 text-white hover:from-orange-600 hover:to-red-600 shadow-lg hover:shadow-xl transition-all duration-300 font-semibold rounded-xl"
+                        disabled={isLocked}
                       >
                         <Edit className="h-4 w-4" />
                         <span className="hidden sm:inline">Modifier</span>
@@ -212,6 +290,7 @@ export const MyForms: React.FC = () => {
                         variant="ghost" 
                         size="sm" 
                         className="flex items-center justify-center space-x-1 bg-gradient-to-r from-blue-500 to-indigo-500 text-white hover:from-blue-600 hover:to-indigo-600 shadow-lg hover:shadow-xl transition-all duration-300 font-semibold rounded-xl"
+                        disabled={isLocked}
                       >
                         <BarChart3 className="h-4 w-4" />
                         <span className="hidden sm:inline">Stats</span>
@@ -225,6 +304,7 @@ export const MyForms: React.FC = () => {
                         onClick={() => copyFormLink(form.id)}
                         className="flex items-center justify-center space-x-1 bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600 shadow-lg hover:shadow-xl transition-all duration-300 font-semibold rounded-xl"
                         title="Copier le lien"
+                        disabled={isLocked}
                       >
                         <ExternalLink className="h-4 w-4" />
                         <span className="hidden sm:inline">Lien</span>
@@ -238,6 +318,7 @@ export const MyForms: React.FC = () => {
                         onClick={() => handleShowQRCode(form.id, form.title)}
                         className="flex items-center justify-center space-x-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-600 hover:to-pink-600 shadow-lg hover:shadow-xl transition-all duration-300 font-semibold rounded-xl"
                         title="Générer QR code"
+                        disabled={isLocked}
                       >
                         <QrCode className="h-4 w-4" />
                         <span className="hidden sm:inline">QR</span>
@@ -250,13 +331,15 @@ export const MyForms: React.FC = () => {
                       onClick={() => handleDelete(form.id, form.title)}
                       className="bg-gradient-to-r from-red-500 to-pink-500 text-white hover:from-red-600 hover:to-pink-600 shadow-lg hover:shadow-xl transition-all duration-300 font-semibold rounded-xl"
                       title="Supprimer le formulaire"
+                      disabled={isLocked}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
                 </CardContent>
               </Card>
-            ))}
+            );
+            })}
           </div>
         )}
 
@@ -281,6 +364,7 @@ export const MyForms: React.FC = () => {
                   </Button>
                   
                   <div className="flex items-center space-x-1">
+                    {/* Afficher les numéros de page */}
                     {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                       let pageNum;
                       if (totalPages <= 5) {
@@ -322,6 +406,14 @@ export const MyForms: React.FC = () => {
             </CardContent>
           </Card>
         )}
+        
+        <LimitReachedModal
+          isOpen={showLimitModal}
+          onClose={() => setShowLimitModal(false)}
+          limitType="forms"
+          currentCount={formsLimits.current}
+          maxCount={formsLimits.max}
+        />
         
         {/* QR Code Modal */}
         {selectedFormForQR && (

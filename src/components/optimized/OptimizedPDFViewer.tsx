@@ -37,7 +37,6 @@ const OptimizedPDFViewerComponent: React.ForwardRefRenderFunction<OptimizedPDFVi
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pdfDimensions, setPdfDimensions] = useState<{ width: number; height: number }[]>([]);
-  const renderTaskRef = useRef<any>(null); // 🔥 NOUVEAU : Référence à la tâche de rendu en cours
 
   useImperativeHandle(ref, () => ({
     getPDFDimensions: (pageNumber: number) => {
@@ -58,30 +57,12 @@ const OptimizedPDFViewerComponent: React.ForwardRefRenderFunction<OptimizedPDFVi
     if (file) {
       loadPDF();
     }
-    
-    // 🔥 NOUVEAU : Cleanup lors du démontage
-    return () => {
-      if (renderTaskRef.current) {
-        console.log('🧹 Annulation de la tâche de rendu en cours');
-        renderTaskRef.current.cancel();
-        renderTaskRef.current = null;
-      }
-    };
   }, [file]);
 
   useEffect(() => {
     if (pdfDoc && numPages > 0) {
       renderCurrentPage();
     }
-    
-    // 🔥 NOUVEAU : Cleanup lors du changement de page/scale
-    return () => {
-      if (renderTaskRef.current) {
-        console.log('🧹 Annulation de la tâche de rendu (changement page/scale)');
-        renderTaskRef.current.cancel();
-        renderTaskRef.current = null;
-      }
-    };
   }, [pdfDoc, numPages, scale, currentPage]);
 
   const loadPDF = async () => {
@@ -90,13 +71,6 @@ const OptimizedPDFViewerComponent: React.ForwardRefRenderFunction<OptimizedPDFVi
     try {
       setLoading(true);
       setError(null);
-      
-      // 🔥 NOUVEAU : Annuler toute tâche de rendu en cours avant de charger un nouveau PDF
-      if (renderTaskRef.current) {
-        console.log('🧹 Annulation de la tâche de rendu avant chargement nouveau PDF');
-        renderTaskRef.current.cancel();
-        renderTaskRef.current = null;
-      }
       
       const pdfjsLib = await import('pdfjs-dist');
       const workerUrl = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
@@ -145,17 +119,6 @@ const OptimizedPDFViewerComponent: React.ForwardRefRenderFunction<OptimizedPDFVi
     if (!pdfDoc || !canvasRef.current) return;
     
     try {
-      // 🔥 CRITIQUE : Annuler toute tâche de rendu en cours AVANT de commencer une nouvelle
-      if (renderTaskRef.current) {
-        console.log('🧹 Annulation de la tâche de rendu précédente');
-        try {
-          await renderTaskRef.current.cancel();
-        } catch (cancelError) {
-          console.warn('⚠️ Erreur lors de l\'annulation:', cancelError);
-        }
-        renderTaskRef.current = null;
-      }
-
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
@@ -163,11 +126,9 @@ const OptimizedPDFViewerComponent: React.ForwardRefRenderFunction<OptimizedPDFVi
       const page = await pdfDoc.getPage(currentPage);
       const viewport = page.getViewport({ scale });
       
-      // 🔥 NOUVEAU : Redimensionner le canvas AVANT de commencer le rendu
       canvas.height = viewport.height;
       canvas.width = viewport.width;
       
-      // 🔥 NOUVEAU : Nettoyer le canvas
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       const renderContext = {
@@ -175,26 +136,10 @@ const OptimizedPDFViewerComponent: React.ForwardRefRenderFunction<OptimizedPDFVi
         viewport: viewport,
       };
 
-      // 🔥 CRITIQUE : Stocker la tâche de rendu et attendre sa complétion
-      console.log(`🎨 Début rendu page ${currentPage} (scale: ${scale})`);
-      renderTaskRef.current = page.render(renderContext);
+      await page.render(renderContext).promise;
       
-      await renderTaskRef.current.promise;
-      
-      console.log(`✅ Rendu page ${currentPage} terminé`);
-      renderTaskRef.current = null;
-      
-    } catch (error: any) {
-      // 🔥 NOUVEAU : Ignorer les erreurs d'annulation (normales)
-      if (error?.name === 'RenderingCancelledException') {
-        console.log('ℹ️ Rendu annulé (normal lors du changement de page)');
-        return;
-      }
-      
+    } catch (error) {
       console.error('❌ Erreur rendu page:', error);
-      
-      // 🔥 NOUVEAU : Nettoyer la référence en cas d'erreur
-      renderTaskRef.current = null;
     }
   };
 
